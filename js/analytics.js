@@ -47,10 +47,8 @@ const Analytics = (() => {
       ? (doneTasks.reduce((a, t) => a + (t.completedAt - t.createdAt), 0) / doneTasks.length / 36e5).toFixed(1) + " hrs"
       : "—";
 
-    // procrastination patterns
-    const plCounts = {};
-    Store.s.procrastinationLog.forEach(p => plCounts[p.reason] = (plCounts[p.reason] || 0) + 1);
-    const topReason = Object.entries(plCounts).sort((a, b) => b[1] - a[1])[0];
+    // procrastination patterns — grouped into themes by the lightweight categorizer below
+    const plCount = Store.s.procrastinationLog.length;
 
     v.innerHTML = `
       <div class="card"><h2>📊 Historical Comparison</h2><p style="font-size:.95rem">${compareMsg}</p></div>
@@ -83,7 +81,9 @@ const Analytics = (() => {
           <div class="stat-line"><span>Overtime worked</span><b>${Store.s.overtimeTotal} min</b></div>
           <div class="stat-line"><span>Avg task lifecycle (created → done)</span><b>${avgLife}</b></div>
           <div class="stat-line"><span>Best streak</span><b>${Store.s.bestStreak} days</b></div>
-          <div class="stat-line"><span>Top avoidance reason</span><b>${topReason ? `${topReason[0]} (${topReason[1]}×)` : "—"}</b></div>
+          <div class="stat-line"><span>Avoidance reasons</span>
+            <button class="btn sm" id="an-avoidance-btn" title="See all your logged avoidance reasons, grouped">View your main avoidance reasons${plCount ? ` (${plCount})` : ""}</button>
+          </div>
         </div>
       </div>
 
@@ -105,6 +105,89 @@ const Analytics = (() => {
     renderTimeline();
     renderReport();
     $("#an-download").onclick = downloadReport;
+    $("#an-avoidance-btn").onclick = avoidanceModal;
+  }
+
+  /* ---------- Avoidance reasons: lightweight theme grouper + donut ----------
+     A tiny keyword classifier that folds free-text reasons ("tv", "yt", "too tired") into a small
+     set of themes ("Entertainment / video", "Low energy"…), so two different words that mean the
+     same thing (YouTube vs TV) count toward one slice of the pie. */
+  const AVOID_CATS = [
+    { id: "entertainment", label: "Entertainment / video", emoji: "📺", kw: ["tv", "show", "shows", "movie", "movies", "youtube", "yt", "netflix", "stream", "streaming", "twitch", "anime", "video", "videos", "watching", "watch", "game", "games", "gaming", "playing", "play"] },
+    { id: "social", label: "Social media / phone", emoji: "📱", kw: ["instagram", "insta", "tiktok", "tik tok", "snapchat", "snap", "twitter", "reddit", "social media", "social", "scrolling", "scroll", "phone", "texting", "discord", "feed"] },
+    { id: "tired", label: "Low energy / tired", emoji: "😴", kw: ["tired", "sleepy", "sleep", "exhausted", "exhaustion", "nap", "no energy", "low energy", "drained", "fatigue", "burnt out", "burnout"] },
+    { id: "overwhelm", label: "Overwhelmed", emoji: "😰", kw: ["overwhelm", "overwhelmed", "too big", "too much", "so much", "stressed", "stress", "anxious", "anxiety", "pressure", "a lot"] },
+    { id: "fear", label: "Fear / perfectionism", emoji: "😨", kw: ["afraid", "scared", "fear", "fail", "failure", "failing", "perfect", "perfectionism", "judged", "judgment", "not good enough", "embarrass"] },
+    { id: "boredom", label: "Boredom", emoji: "🥱", kw: ["boring", "bored", "dull", "tedious", "not fun", "no fun", "unmotivated", "lazy"] },
+    { id: "confusion", label: "Unclear / stuck", emoji: "😵", kw: ["confused", "confusing", "don't know", "dont know", "no idea", "unclear", "how to", "where to start", "next step", "stuck", "lost"] },
+    { id: "time", label: "'No time' / later", emoji: "⏰", kw: ["no time", "busy", "later", "not now", "put off", "procrastinat"] },
+  ];
+  const AVOID_OTHER = { id: "other", label: "Other", emoji: "🤷" };
+
+  function categorizeAvoidance(reason) {
+    const low = " " + String(reason || "").toLowerCase().replace(/[''`]/g, "'") + " ";
+    for (const c of AVOID_CATS) {
+      const hit = c.kw.some(k => new RegExp("(?:^|[^a-z])" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:[^a-z]|$)", "i").test(low));
+      if (hit) return c;
+    }
+    return AVOID_OTHER;
+  }
+
+  function avoidanceModal() {
+    const log = Store.s.procrastinationLog || [];
+    const total = log.length;
+    const groups = {};
+    log.forEach(p => {
+      const c = categorizeAvoidance(p.reason);
+      (groups[c.id] = groups[c.id] || { cat: c, items: [] }).items.push(p);
+    });
+    const entries = Object.values(groups).sort((a, b) => b.items.length - a.items.length);
+
+    const body = total ? `
+      <div class="avoid-top">
+        <canvas id="avoid-pie" width="170" height="170"></canvas>
+        <div class="pie-legend" id="avoid-legend"></div>
+      </div>
+      <div class="avoid-groups">
+        ${entries.map(e => `
+          <details class="avoid-group" open>
+            <summary>${e.cat.emoji} <b>${esc(e.cat.label)}</b> <span class="muted">— ${e.items.length} (${Math.round(e.items.length / total * 100)}%)</span></summary>
+            ${e.items.slice().reverse().map(it => `<div class="avoid-item"><span class="avoid-date">${new Date(it.ts).toLocaleDateString()}</span> ${esc(it.reason)}${it.taskTitle ? ` <span class="muted">· ${esc(it.taskTitle)}</span>` : ""}</div>`).join("")}
+          </details>`).join("")}
+      </div>` : `<p class="muted">No avoidance reasons logged yet. Next time you hit <b>😩 "Why am I avoiding this?"</b> on a task, your honest reason lands here — and this grouper starts spotting the patterns.</p>`;
+
+    UI.modal("🧠 Your main avoidance reasons", body, [{ label: "Close", cls: "primary" }]);
+    if (total) setTimeout(() => drawAvoidPie(entries, total), 40);
+  }
+
+  function drawAvoidPie(entries, total) {
+    const cv = document.getElementById("avoid-pie");
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    const colors = ["#8e6ff0", "#6d7cff", "#3fbf76", "#d9a648", "#ec5f59", "#ff9e4a", "#4ec3c3", "#e87ca8", "#9a8cff"];
+    const legend = document.getElementById("avoid-legend");
+    legend.innerHTML = "";
+    let ang = -Math.PI / 2;
+    entries.forEach((e, i) => {
+      const v = e.items.length;
+      const slice = (v / total) * Math.PI * 2;
+      ctx.beginPath(); ctx.moveTo(85, 85);
+      ctx.arc(85, 85, 80, ang, ang + slice - (entries.length > 1 ? 0.02 : 0));
+      ctx.closePath();
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fill();
+      ang += slice;
+      legend.innerHTML += `<div><span class="dot" style="background:${colors[i % colors.length]}"></span>${e.cat.emoji} ${esc(e.cat.label)} — <b>${Math.round(v / total * 100)}%</b> (${v})</div>`;
+    });
+    ctx.beginPath(); ctx.arc(85, 85, 48, 0, Math.PI * 2);
+    ctx.fillStyle = cssVar("--overlay") || cssVar("--card") || "#101116"; ctx.fill();
+    ctx.fillStyle = cssVar("--text") || "#e4e5e9";
+    ctx.font = "700 22px Inter, sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(String(total), 85, 82);
+    ctx.font = "500 10px Inter, sans-serif";
+    ctx.fillStyle = cssVar("--muted") || "#7e828e";
+    ctx.fillText(total === 1 ? "LOG" : "LOGS", 85, 98);
+    ctx.textAlign = "left";
   }
 
   function renderHeatmap() {

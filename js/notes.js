@@ -10,6 +10,9 @@ const Notes = (() => {
   let activeNoteId = null;
   let notesMode = "list"; // list | graph | canvas
   let activeCanvasId = null;
+  // Scope for the Notes list + Graph views: null = all standalone notes; a canvas id = show only
+  // that canvas's notecards (and, in Graph, its card-to-card connections as the edges).
+  let scopeCanvasId = null;
   let pendingGraphNodePos = null; // {id,x,y} — pins a just-created note at the right-click spot
   let graph3D = false; // toggled by the graph view's 2D/3D control
   let graphRotY = -0.5, graphRotX = -0.28; // orbit camera angles, only used in 3D mode
@@ -18,8 +21,8 @@ const Notes = (() => {
   // note/card color-swatch popover — attaching this inside render() instead would stack a
   // fresh listener on every repaint.
   document.addEventListener("click", e => {
-    if (!e.target.closest(".note-color-pop") && !e.target.closest("#note-color-btn")) {
-      const p = document.getElementById("note-color-pop"); if (p) p.classList.add("hidden");
+    if (!e.target.closest(".note-color-pop") && !e.target.closest("#note-color-btn") && !e.target.closest("#card-color-btn")) {
+      document.querySelectorAll(".note-color-pop").forEach(p => p.classList.add("hidden"));
     }
     if (!e.target.closest(".canvas-color-pop") && !e.target.closest(".card-color-dot")) {
       document.querySelectorAll(".canvas-color-pop").forEach(p => p.classList.add("hidden"));
@@ -98,16 +101,10 @@ const Notes = (() => {
     out = out.replace(/^- \[ \] (.*)$/gm, '<div>⬜ $1</div>');
     out = out.replace(/^(\s*)- (.*)$/gm, "$1<li>$2</li>");
     out = out.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-    // colored text: {{colorid:text}} — resolved first (innermost) so a wrapping {{font:...}}
-    // below can see already-converted HTML instead of nested braces. The negative lookahead
-    // stops "font" from being misread as a color id when {{font:...}} runs through here.
-    out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
-      const c = NOTE_COLORS.find(cc => cc.id === colorId);
-      return c ? `<span style="color:${c.hex}">${text}</span>` : text;
-    });
-    // custom font: {{font:Family Name|text}}
-    out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
-      `<span style="font-family:${font}">${text}</span>`);
+    // colored text {{colorid:text}} + custom font {{font:Family|text}}. Looped so nested wraps
+    // (e.g. a legacy {{orange:{{orange:food}}}}) fully resolve innermost-first instead of leaving
+    // stray braces/ids visible as literal text like "orange:food".
+    out = resolveInlineTokens(out);
     // bold / italic / underline / inline code
     out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
@@ -116,6 +113,47 @@ const Notes = (() => {
     // paragraphs
     out = out.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>");
     return out;
+  }
+
+  // Resolves the inline color/font tokens on an already-escaped string, looping until stable so
+  // nested wraps collapse cleanly. Shared by the full renderer and the inline preview renderer.
+  function resolveInlineTokens(out) {
+    let prev;
+    do {
+      prev = out;
+      out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
+        const c = NOTE_COLORS.find(cc => cc.id === colorId);
+        return c ? `<span style="color:${c.hex}">${text}</span>` : text;
+      });
+      out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
+        `<span style="font-family:${esc(font)}">${text}</span>`);
+    } while (out !== prev);
+    return out;
+  }
+
+  // Inline-only renderer for previews (note tiles, canvas card read-mode): keeps text formatting
+  // (color, bold, italic, underline, font, inline code) but strips block structure (headers,
+  // bullets, quotes, wiki/link syntax) down to plain flowing text — so a snippet shows "food" in
+  // orange rather than the raw "{{orange:food}}" markup.
+  function renderInline(src) {
+    let out = esc(src || "");
+    out = out.replace(/```\w*\n?([\s\S]*?)```/g, "$1");           // code fence -> its contents
+    out = out.replace(/\[\[([^\]]+)\]\]/g, "$1");                  // [[wiki]] -> label
+    out = out.replace(/!\[([^\]]*)\]\((\S+?)\)/g, "$1");           // image -> alt
+    out = out.replace(/\[([^\]]+)\]\((\S+?)\)/g, "$1");            // link -> text
+    out = out.replace(/^\s*#{1,3}\s*/gm, "");                      // headings
+    out = out.replace(/^\s*(?:&gt;){1,2} ?/gm, "");                // quote / toggle open
+    out = out.replace(/^\s*(?:&lt;){2}\s*$/gm, "");                // toggle close
+    out = out.replace(/^\s*-\s*\[[ xX]\]\s*/gm, "");              // checkbox
+    out = out.replace(/^\s*[-*]\s+/gm, "");                        // bullets
+    out = out.replace(/-{3,}/g, " ");                             // hr
+    out = resolveInlineTokens(out);
+    out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
+    out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
+    out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    out = out.replace(/\s*\n+\s*/g, " ");
+    return out.trim();
   }
 
   /* ---------- Notes view ---------- */
@@ -148,30 +186,51 @@ const Notes = (() => {
   // Clicking a tile opens the full editor in a centered, blurred-backdrop popup (openNoteModal)
   // instead of a permanent side pane, so the grid itself stays airy and scannable.
   function renderListMode(v) {
+    ensureCanvases();
+    // Keep the scope valid if a canvas was deleted since last render.
+    if (scopeCanvasId && !Store.s.canvases.find(c => c.id === scopeCanvasId)) scopeCanvasId = null;
+    const scopeCv = scopeCanvasId ? Store.s.canvases.find(c => c.id === scopeCanvasId) : null;
+
     v.innerHTML = `
       <div class="notes-grid-toolbar">
         <div class="notes-search-wrap">
           <i class="ico" data-ico="search"></i>
           <input type="text" id="notes-search" placeholder="Search notes, canvases &amp; notecard content…" value="${esc(noteSearchQuery)}">
         </div>
-        <select id="note-template" title="From template">
-          <option value="">＋ From template…</option>
-          ${Object.keys(TEMPLATES).map(t => `<option>${t}</option>`).join("")}
+        <select id="canvas-select" title="Show notecards from a canvas">
+          <option value="">🗂 All notes</option>
+          ${Store.s.canvases.map(c => `<option value="${c.id}" ${c.id === scopeCanvasId ? "selected" : ""}>▦ ${esc(c.name)}</option>`).join("")}
         </select>
-        <button class="btn-plus" id="note-new" title="New note"><i class="ico" data-ico="plus"></i></button>
+        <div class="note-tpl-wrap">
+          <button class="btn sm" id="note-template-btn" title="New note from a template">＋ Template…</button>
+        </div>
+        <button class="btn-plus" id="note-new" title="${scopeCv ? "New notecard in this canvas" : "New note"}"><i class="ico" data-ico="plus"></i></button>
       </div>
+      ${scopeCv ? `<div class="notes-scope-hint">Showing notecards in <b>${esc(scopeCv.name)}</b> — new notes land here as cards and appear in this canvas &amp; the graph.</div>` : ""}
       <div class="notes-tile-grid" id="notes-tile-grid"></div>`;
     UI.mountIcons(v);
 
     const grid = $("#notes-tile-grid");
     const q = noteSearchQuery.trim();
-    const notes = Store.s.notes.filter(n => noteMatchesSearch(n, q));
-    if (!Store.s.notes.length) {
-      grid.innerHTML = `<div class="notes-empty-hint">No notes yet. Hit ＋ above or pick a template to start writing.</div>`;
-    } else if (!notes.length) {
-      grid.innerHTML = `<div class="notes-empty-hint">No notes match "${esc(q)}".</div>`;
+
+    if (scopeCv) {
+      const cards = scopeCv.cards.filter(c => cardMatchesSearch(c, q));
+      if (!scopeCv.cards.length) {
+        grid.innerHTML = `<div class="notes-empty-hint">No notecards in "${esc(scopeCv.name)}" yet. Hit ＋ to add one — it appears here, on the canvas, and in the graph.</div>`;
+      } else if (!cards.length) {
+        grid.innerHTML = `<div class="notes-empty-hint">No notecards match "${esc(q)}".</div>`;
+      } else {
+        cards.forEach((c, i) => grid.appendChild(cardTileEl(scopeCv, c, scopeCv.cards.indexOf(c))));
+      }
     } else {
-      notes.forEach(n => grid.appendChild(noteTileEl(n)));
+      const notes = Store.s.notes.filter(n => noteMatchesSearch(n, q));
+      if (!Store.s.notes.length) {
+        grid.innerHTML = `<div class="notes-empty-hint">No notes yet. Hit ＋ above or pick a template to start writing.</div>`;
+      } else if (!notes.length) {
+        grid.innerHTML = `<div class="notes-empty-hint">No notes match "${esc(q)}".</div>`;
+      } else {
+        notes.forEach(n => grid.appendChild(noteTileEl(n)));
+      }
     }
 
     const searchInput = $("#notes-search");
@@ -182,19 +241,68 @@ const Notes = (() => {
       const fresh = $("#notes-search");
       fresh.focus(); fresh.setSelectionRange(caret, caret);
     };
-    $("#note-new").onclick = () => { const n = createNoteQuiet("Untitled", ""); render(); openNoteModal(n.id); };
-    $("#note-template").onchange = e => {
-      const t = e.target.value;
-      if (!t) return;
-      const n = createNoteQuiet(t + " — " + Store.todayStr(), TEMPLATES[t].replace(/{date}/g, Store.todayStr()));
-      render(); openNoteModal(n.id);
+    $("#canvas-select").onchange = e => { scopeCanvasId = e.target.value || null; renderListMode(v); };
+    $("#note-new").onclick = () => {
+      if (scopeCv) {
+        const card = addCardToCanvas(scopeCv);
+        renderListMode(v);
+        openCardModal(scopeCv, card);
+      } else {
+        const n = createNoteQuiet("Untitled", ""); render(); openNoteModal(n.id);
+      }
     };
+    $("#note-template-btn").onclick = e => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const r = btn.getBoundingClientRect();
+      showContextMenu(document.body, r.left, r.bottom + 4, Object.keys(TEMPLATES).map(t => ({
+        label: t,
+        onClick: () => {
+          const n = createNoteQuiet(t + " — " + Store.todayStr(), TEMPLATES[t].replace(/{date}/g, Store.todayStr()));
+          scopeCanvasId = null;
+          render(); openNoteModal(n.id);
+        },
+      })));
+    };
+  }
+
+  function cardMatchesSearch(c, q) {
+    if (!q) return true;
+    q = q.toLowerCase();
+    return (c.title || "").toLowerCase().includes(q) || (c.text || "").toLowerCase().includes(q);
+  }
+
+  // A notecard rendered as a note-list tile (used when the list is scoped to a canvas). Clicking
+  // opens the single-card editor modal; both keep the canvas + graph in sync.
+  function cardTileEl(cv, card, idx) {
+    const colorHex = card.color ? (NOTE_COLORS.find(c => c.id === card.color) || {}).hex : null;
+    const hasText = (card.text || "").trim().length > 0;
+    const connCount = (cv.connections || []).filter(cn => cn.from === card.id || cn.to === card.id).length;
+    const tile = el("div", `note-tile ${colorHex ? "tinted" : ""}`);
+    if (colorHex) tile.style.setProperty("--tint", colorHex);
+    tile.innerHTML = `
+      <div class="note-tile-head">
+        <span class="note-tile-title">${esc(card.title || `Notecard ${idx + 1}`)}</span>
+        <button class="icon-btn note-tile-del" title="Delete notecard"><i class="ico" data-ico="x"></i></button>
+      </div>
+      <div class="note-tile-snip" style="${card.font ? `font-family:${esc(card.font)}` : ""}">${hasText ? renderInline(card.text) : '<span class="muted2">Empty notecard</span>'}</div>
+      <div class="note-tile-tag"><i class="ico" data-ico="link"></i> ${esc(cv.name)}${connCount ? ` · ${connCount} link${connCount === 1 ? "" : "s"}` : ""}</div>`;
+    UI.mountIcons(tile);
+    tile.querySelector(".note-tile-del").onclick = e => {
+      e.stopPropagation();
+      cv.cards = cv.cards.filter(x => x.id !== card.id);
+      cv.connections = (cv.connections || []).filter(cn => cn.from !== card.id && cn.to !== card.id);
+      syncCanvasNote(cv); render();
+    };
+    tile.onclick = () => openCardModal(cv, card);
+    return tile;
   }
 
   function noteTileEl(n) {
     const colorHex = n.color ? (NOTE_COLORS.find(c => c.id === n.color) || {}).hex : null;
     const isCanvasMirror = Store.s.canvases.some(c => c.noteId === n.id);
-    const snippet = (n.body || "").replace(/[#>*_`\[\]{}]/g, "").replace(/-{3,}/g, " ").replace(/\s+/g, " ").trim().slice(0, 92);
+    const hasText = (n.body || "").trim().length > 0;
+    const snippet = renderInline(n.body);
     const tile = el("div", `note-tile ${colorHex ? "tinted" : ""}`);
     if (colorHex) tile.style.setProperty("--tint", colorHex);
     tile.innerHTML = `
@@ -202,7 +310,7 @@ const Notes = (() => {
         <span class="note-tile-title">${esc(n.title || "Untitled")}</span>
         <button class="icon-btn note-tile-del" title="Delete"><i class="ico" data-ico="x"></i></button>
       </div>
-      <div class="note-tile-snip">${snippet ? esc(snippet) + (snippet.length >= 92 ? "…" : "") : '<span class="muted2">Empty note</span>'}</div>
+      <div class="note-tile-snip">${hasText ? snippet : '<span class="muted2">Empty note</span>'}</div>
       ${isCanvasMirror ? `<div class="note-tile-tag"><i class="ico" data-ico="cube"></i> Canvas</div>` : ""}`;
     UI.mountIcons(tile);
     tile.querySelector(".note-tile-del").onclick = e => {
@@ -373,6 +481,113 @@ const Notes = (() => {
     };
   }
 
+  /* ---------- Single-notecard editor modal (opened from the canvas-scoped Notes list) ---------- */
+  function addCardToCanvas(cv) {
+    const i = cv.cards.length;
+    const card = { id: "cc" + Date.now() + Math.floor(Math.random() * 1000), x: 40 + (i % 4) * 240, y: 40 + Math.floor(i / 4) * 170, w: 220, h: 150, title: "", text: "", color: null, font: null };
+    cv.cards.push(card);
+    syncCanvasNote(cv);
+    return card;
+  }
+
+  // Wires a `.note-format-bar` (bold/italic/underline via [data-cmd], color via .fmt-color-swatch,
+  // font via .fmt-font-select) to a contenteditable, preserving the selection across button clicks.
+  function wireFormatBar(scope, ed, onChange) {
+    scope.querySelectorAll(".note-format-bar button, .note-format-bar select").forEach(b => b.addEventListener("mousedown", e => e.preventDefault()));
+    let range = null;
+    const saveRange = () => {
+      const sel = window.getSelection();
+      if (sel.rangeCount && ed.contains(sel.anchorNode)) range = sel.getRangeAt(0).cloneRange();
+    };
+    ed.addEventListener("mouseup", saveRange);
+    ed.addEventListener("keyup", saveRange);
+    const applyCmd = (cmd, val) => {
+      ed.focus();
+      if (range) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+      try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+      document.execCommand(cmd, false, val);
+      onChange();
+    };
+    scope.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () => applyCmd(b.dataset.cmd));
+    scope.querySelectorAll(".fmt-color-swatch").forEach(sw => sw.onclick = () => {
+      const c = NOTE_COLORS.find(cc => cc.id === sw.dataset.color); if (c) applyCmd("foreColor", c.hex);
+    });
+    const fontSel = scope.querySelector(".fmt-font-select");
+    if (fontSel) fontSel.onchange = e => { if (e.target.value) applyCmd("fontName", e.target.value); e.target.selectedIndex = 0; };
+    return applyCmd;
+  }
+
+  let cardModalBack = null;
+  function closeCardModal() {
+    if (!cardModalBack) return;
+    const back = cardModalBack; cardModalBack = null;
+    back.classList.remove("open");
+    setTimeout(() => back.remove(), 160);
+    if ($("#notes-mode-body") && notesMode === "list") renderListMode($("#notes-mode-body"));
+    if ($("#notes-mode-body") && notesMode === "graph") renderGraphMode($("#notes-mode-body"));
+  }
+  function openCardModal(cv, card) {
+    if (!card) return;
+    if (cardModalBack) cardModalBack.remove();
+    const back = el("div", "note-modal-back", '<div class="note-modal-box"></div>');
+    document.body.appendChild(back); cardModalBack = back;
+    back.onclick = e => { if (e.target === back) closeCardModal(); };
+    const escHandler = e => { if (e.key === "Escape" && cardModalBack === back) { closeCardModal(); document.removeEventListener("keydown", escHandler); } };
+    document.addEventListener("keydown", escHandler);
+    mountCardEditor(back.querySelector(".note-modal-box"), cv, card);
+    requestAnimationFrame(() => back.classList.add("open"));
+  }
+  function mountCardEditor(wrap, cv, card) {
+    const activeColor = card.color ? NOTE_COLORS.find(c => c.id === card.color) : null;
+    wrap.innerHTML = `
+      <div class="note-title-row">
+        <input type="text" id="card-title" value="${esc(card.title || "")}" placeholder="Notecard title">
+        <button class="icon-btn note-color-dot" id="card-color-btn" title="Card color">
+          <i style="width:10px;height:10px;border-radius:50%;display:block;background:${activeColor ? activeColor.hex : "transparent"};border:1px solid ${activeColor ? activeColor.hex : "var(--line-strong)"}"></i>
+        </button>
+        <div class="note-color-pop hidden" id="card-color-pop">
+          <button class="note-color-swatch" data-color="" title="No color"><i class="ico" data-ico="x"></i></button>
+          ${NOTE_COLORS.map(c => `<button class="note-color-swatch" data-color="${c.id}" style="background:${c.hex}" title="${c.id}"></button>`).join("")}
+        </div>
+        <button class="icon-btn note-modal-close" id="card-modal-close" title="Close (Esc)"><i class="ico" data-ico="x"></i></button>
+      </div>
+      <div class="notes-mode-tabs" style="margin-bottom:8px">
+        <span class="card-sub" style="font-size:.72rem;padding:6px 8px 6px 2px">Notecard in <b>${esc(cv.name)}</b> · type <code>[[Note Title]]</code> to link · connect cards on the Canvas or Graph tab.</span>
+      </div>
+      <div class="note-format-bar">
+        <button class="icon-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+        <button class="icon-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+        <button class="icon-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+        <select class="fmt-font-select" title="Font" style="font-size:.72rem;padding:2px 4px;max-width:96px">
+          ${NOTE_FONTS.map(f => `<option value="${f.family}">${f.label}</option>`).join("")}
+        </select>
+        <span class="fmt-sep"></span>
+        ${NOTE_COLORS.map(c => `<button class="fmt-color-swatch" data-color="${c.id}" style="background:${c.hex}" title="Color text ${c.id}"></button>`).join("")}
+      </div>
+      <div id="card-editor" contenteditable="true" style="font-family:${card.font || ""}"></div>`;
+    UI.mountIcons(wrap);
+
+    wrap.querySelector("#card-modal-close").onclick = () => closeCardModal();
+    const titleInput = wrap.querySelector("#card-title");
+    titleInput.oninput = () => { card.title = titleInput.value; syncCanvasNote(cv); };
+
+    const colorBtn = wrap.querySelector("#card-color-btn");
+    const colorPop = wrap.querySelector("#card-color-pop");
+    colorBtn.onclick = e => { e.stopPropagation(); colorPop.classList.toggle("hidden"); };
+    wrap.querySelectorAll("#card-color-pop .note-color-swatch").forEach(sw => sw.onclick = () => {
+      card.color = sw.dataset.color || null; syncCanvasNote(cv); mountCardEditor(wrap, cv, card);
+    });
+
+    const ed = wrap.querySelector("#card-editor");
+    ed.innerHTML = renderMarkdown(card.text) || "";
+    const autoGrow = () => { ed.style.height = "auto"; ed.style.height = Math.min(Math.max(ed.scrollHeight, 160), Math.round(window.innerHeight * 0.52)) + "px"; };
+    autoGrow();
+    const commit = () => { card.text = serializeEditor(ed); syncCanvasNote(cv); };
+    wireFormatBar(wrap, ed, commit);
+    ed.oninput = () => { commit(); autoGrow(); };
+    ed.onblur = () => { commit(); ed.innerHTML = renderMarkdown(card.text) || ""; autoGrow(); };
+  }
+
   /* ---------- Graph View — Linear-style force layout of [[wiki links]] ---------- */
   // Regex-extracts every [[Note Title]] reference out of a note's body. Titles keep
   // their original casing here — callers that need case-insensitive matching lowercase
@@ -419,23 +634,70 @@ const Notes = (() => {
     return getComputedStyle(document.body).getPropertyValue(name).trim() || "#8a8f98";
   }
 
-  function renderGraphMode(container) {
-    // Backfill: re-sync every note's wiki links before drawing, so notes edited via Canvas
-    // cards (or any path that bypasses the main editor's blur handler) still show up correctly.
-    // Iterate a snapshot — syncWikiLinks can unshift newly auto-created notes into Store.s.notes.
+  // Builds the {nodes, edges, open, empty, addAt} dataset for the Graph View, honoring scopeCanvasId:
+  //  • a selected canvas → its notecards are the nodes and cv.connections are the edges (lines),
+  //  • otherwise → all standalone notes, linked by their [[wiki]] `links`.
+  function buildGraphData() {
+    const scopeCv = scopeCanvasId ? Store.s.canvases.find(c => c.id === scopeCanvasId) : null;
+    if (scopeCv) {
+      const rawNodes = scopeCv.cards.map((c, i) => ({ id: c.id, title: c.title || `Notecard ${i + 1}`, color: c.color }));
+      const idset = new Set(rawNodes.map(n => n.id));
+      const rawEdges = [];
+      const seen = new Set();
+      (scopeCv.connections || []).forEach(cn => {
+        if (!idset.has(cn.from) || !idset.has(cn.to) || cn.from === cn.to) return;
+        const key = [cn.from, cn.to].sort().join("|");
+        if (seen.has(key)) return;
+        seen.add(key); rawEdges.push({ a: cn.from, b: cn.to });
+      });
+      return {
+        rawNodes, rawEdges,
+        open: id => openCardModal(scopeCv, scopeCv.cards.find(c => c.id === id)),
+        empty: `Add a few notecards to "${esc(scopeCv.name)}" and connect them (drag a card's link dot on the Canvas tab) to see them wired here.`,
+        addAt: pos => { const card = addCardToCanvas(scopeCv); pendingGraphNodePos = { id: card.id, x: pos.x, y: pos.y }; renderGraphMode(container0); },
+      };
+    }
     Store.s.notes.slice().forEach(n => syncWikiLinks(n));
-    const notes = Store.s.notes;
+    const rawNodes = Store.s.notes.map(n => ({ id: n.id, title: n.title || "Untitled", color: n.color }));
+    const idset = new Set(rawNodes.map(n => n.id));
+    const rawEdges = [];
+    const seen = new Set();
+    Store.s.notes.forEach(n => (n.links || []).forEach(t => {
+      if (!idset.has(t) || t === n.id) return;
+      const key = [n.id, t].sort().join("|");
+      if (seen.has(key)) return;
+      seen.add(key); rawEdges.push({ a: n.id, b: t });
+    }));
+    return {
+      rawNodes, rawEdges,
+      open: id => openNoteModal(id),
+      empty: "Create a couple of notes and link them with <code>[[Note Title]]</code> to see the graph come alive.",
+      addAt: pos => { const predictedId = "n" + Store.s.noteSeq; pendingGraphNodePos = { id: predictedId, x: pos.x, y: pos.y }; createNote("Untitled", ""); },
+    };
+  }
+
+  let container0 = null;
+  function renderGraphMode(container) {
+    container0 = container;
+    const gd = buildGraphData();
+    const dataNodes = gd.rawNodes, dataEdges = gd.rawEdges;
+    const scoped = !!scopeCanvasId;
     container.innerHTML = `<div class="notes-graph-wrap">
       <canvas id="notes-graph-canvas"></canvas>
       <div class="graph-tooltip hidden" id="graph-tooltip"></div>
-      ${notes.length < 2 ? `<div class="graph-empty-hint">Create a couple of notes and link them with <code>[[Note Title]]</code> to see the graph come alive.</div>` : ""}
+      ${dataNodes.length < 2 ? `<div class="graph-empty-hint">${gd.empty}</div>` : ""}
       <div class="graph-toolbar">
+        <select id="graph-canvas-select" title="Scope the graph">
+          <option value="">All notes</option>
+          ${Store.s.canvases.map(c => `<option value="${c.id}" ${c.id === scopeCanvasId ? "selected" : ""}>▦ ${esc(c.name)}</option>`).join("")}
+        </select>
         <button class="btn sm ${!graph3D ? "primary" : ""}" id="graph-mode-2d">2D</button>
         <button class="btn sm ${graph3D ? "primary" : ""}" id="graph-mode-3d">3D</button>
       </div>
-      <div class="graph-hint-bar">${graph3D ? "Drag to orbit · scroll to zoom · click a dot to open its note" : "Drag to pan · scroll to zoom · drag a dot to move it · click a dot to open its note"}</div>
+      <div class="graph-hint-bar">${scoped ? "Canvas notecards + their connections" : (graph3D ? "Drag to orbit · scroll to zoom · click a dot to open its note" : "Drag to pan · scroll to zoom · drag a dot to move it · click a dot to open it")}</div>
     </div>`;
-    if (notes.length < 1) return;
+    $("#graph-canvas-select").onchange = e => { scopeCanvasId = e.target.value || null; renderGraphMode(container); };
+    if (dataNodes.length < 1) return;
     $("#graph-mode-2d").onclick = () => { if (graph3D) { graph3D = false; renderGraphMode(container); } };
     $("#graph-mode-3d").onclick = () => { if (!graph3D) { graph3D = true; renderGraphMode(container); } };
 
@@ -449,12 +711,12 @@ const Notes = (() => {
     ctx.scale(dpr, dpr);
     const W = rect.width, H = rect.height;
 
-    // Build nodes + edges from each note's synced `links` array (kept up to date by syncWikiLinks)
+    // Build positioned nodes + edges from the scoped dataset.
     const spread = Math.min(W, H);
-    const nodes = notes.map((n, i) => ({
+    const nodes = dataNodes.map((n, i) => ({
       id: n.id, title: n.title || "Untitled", color: n.color,
-      x: W / 2 + Math.cos(i / notes.length * Math.PI * 2) * spread * 0.28 + (Math.random() - 0.5) * 20,
-      y: H / 2 + Math.sin(i / notes.length * Math.PI * 2) * spread * 0.28 + (Math.random() - 0.5) * 20,
+      x: W / 2 + Math.cos(i / dataNodes.length * Math.PI * 2) * spread * 0.28 + (Math.random() - 0.5) * 20,
+      y: H / 2 + Math.sin(i / dataNodes.length * Math.PI * 2) * spread * 0.28 + (Math.random() - 0.5) * 20,
       z: graph3D ? (Math.random() - 0.5) * spread * 0.55 : 0,
       vx: 0, vy: 0, vz: 0, degree: 0,
     }));
@@ -464,17 +726,7 @@ const Notes = (() => {
       pendingGraphNodePos = null;
     }
     const nodeById = new Map(nodes.map(n => [n.id, n]));
-    const edgeSet = new Set();
-    const edges = [];
-    notes.forEach(n => {
-      (n.links || []).forEach(targetId => {
-        if (targetId === n.id || !nodeById.has(targetId)) return;
-        const key = [n.id, targetId].sort().join("|");
-        if (edgeSet.has(key)) return;
-        edgeSet.add(key);
-        edges.push({ a: n.id, b: targetId });
-      });
-    });
+    const edges = dataEdges.filter(e => nodeById.has(e.a) && nodeById.has(e.b));
     edges.forEach(e => { nodeById.get(e.a).degree++; nodeById.get(e.b).degree++; });
 
     const radiusOf = nd => 3.5 + Math.min(nd.degree, 10) * 1.05;
@@ -654,12 +906,12 @@ const Notes = (() => {
     function onUp(e) {
       canvas.classList.remove("grabbing");
       if (drag && drag.type === "node3d") {
-        openNoteModal(drag.node.id);
+        gd.open(drag.node.id);
         drag = null;
         return;
       }
       if (drag && drag.type === "node" && !drag.moved) {
-        openNoteModal(drag.node.id);
+        gd.open(drag.node.id);
         drag = null;
         return;
       }
@@ -685,11 +937,7 @@ const Notes = (() => {
       const p = graphPoint(e.clientX, e.clientY);
       const r = canvas.getBoundingClientRect();
       showContextMenu(wrap, e.clientX - r.left, e.clientY - r.top, [
-        { label: "＋ New note here", onClick: () => {
-          const predictedId = "n" + Store.s.noteSeq;
-          pendingGraphNodePos = { id: predictedId, x: p.x, y: p.y };
-          createNote("Untitled", "");
-        } },
+        { label: scopeCanvasId ? "＋ New notecard here" : "＋ New note here", onClick: () => gd.addAt(p) },
       ]);
     });
 
@@ -913,7 +1161,14 @@ const Notes = (() => {
           ${NOTE_FONTS.map(f => `<button class="canvas-font-swatch" data-font="${esc(f.family)}" style="font-family:${f.family || "inherit"}">Aa</button>`).join("")}
         </div>
         <input type="text" class="canvas-card-title" placeholder="Notecard ${idx + 1}" value="${esc(card.title || "")}">
-        <textarea placeholder="Type a note…" style="font-family:${card.font || ""}">${esc(card.text || "")}</textarea>
+        <div class="canvas-card-fmt hidden">
+          <button class="icon-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button class="icon-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button class="icon-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+          <select class="card-fmt-font" title="Font">${NOTE_FONTS.map(f => `<option value="${f.family}">${f.label}</option>`).join("")}</select>
+          ${NOTE_COLORS.map(c => `<button class="fmt-color-swatch" data-color="${c.id}" style="background:${c.hex}" title="Text color ${c.id}"></button>`).join("")}
+        </div>
+        <div class="canvas-card-body" contenteditable="true" data-ph="Type a note…" style="font-family:${card.font || ""}"></div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
 
@@ -941,10 +1196,49 @@ const Notes = (() => {
       const titleInput = d.querySelector(".canvas-card-title");
       titleInput.oninput = () => { card.title = titleInput.value; syncCanvasNote(cv); };
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
-      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); d.querySelector("textarea").focus(); } });
+      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); d.querySelector(".canvas-card-body").focus(); } });
 
-      const ta = d.querySelector("textarea");
-      ta.oninput = () => { card.text = ta.value; syncCanvasNote(cv); };
+      // Rich-text card body: renders formatting (color/bold/italic/underline/font) in read mode,
+      // and exposes a compact toolbar while focused so the same formatting can be applied inline —
+      // so exiting the card keeps "food" orange instead of showing raw {{orange:food}} markup.
+      const body = d.querySelector(".canvas-card-body");
+      const fmt = d.querySelector(".canvas-card-fmt");
+      body.innerHTML = renderMarkdown(card.text) || "";
+      let cardRange = null;
+      const saveRange = () => {
+        const sel = window.getSelection();
+        if (sel.rangeCount && body.contains(sel.anchorNode)) cardRange = sel.getRangeAt(0).cloneRange();
+      };
+      body.addEventListener("mouseup", saveRange);
+      body.addEventListener("keyup", saveRange);
+      const commitBody = () => { card.text = serializeEditor(body); syncCanvasNote(cv); };
+      body.addEventListener("mousedown", e => e.stopPropagation());
+      body.addEventListener("focus", () => fmt.classList.remove("hidden"));
+      body.addEventListener("input", commitBody);
+      body.addEventListener("blur", () => {
+        commitBody();
+        // Delay so a toolbar-button click (which blurs the body) still lands before we re-render.
+        setTimeout(() => {
+          if (d.contains(document.activeElement)) return;
+          fmt.classList.add("hidden");
+          body.innerHTML = renderMarkdown(card.text) || "";
+        }, 150);
+      });
+      fmt.querySelectorAll("button, select").forEach(b => b.addEventListener("mousedown", e => e.preventDefault()));
+      const applyCardCmd = (cmd, val) => {
+        body.focus();
+        if (cardRange) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(cardRange); }
+        try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+        document.execCommand(cmd, false, val);
+        commitBody();
+      };
+      fmt.querySelectorAll("[data-cmd]").forEach(b => b.onclick = () => applyCardCmd(b.dataset.cmd));
+      fmt.querySelectorAll(".fmt-color-swatch").forEach(sw => sw.onclick = () => {
+        const c = NOTE_COLORS.find(cc => cc.id === sw.dataset.color);
+        if (c) applyCardCmd("foreColor", c.hex);
+      });
+      const cardFontSel = fmt.querySelector(".card-fmt-font");
+      if (cardFontSel) cardFontSel.onchange = e => { if (e.target.value) applyCardCmd("fontName", e.target.value); e.target.selectedIndex = 0; };
 
       const head = d.querySelector(".canvas-card-head");
       head.addEventListener("dblclick", e => {
@@ -1156,7 +1450,16 @@ const Notes = (() => {
   }
 
   function serializeEditor(ed) {
-    return Array.from(ed.childNodes).map(domToMarkdown).join("").replace(/\n{3,}/g, "\n\n").replace(/[ \t]+\n/g, "\n");
+    let out = Array.from(ed.childNodes).map(domToMarkdown).join("").replace(/\n{3,}/g, "\n\n").replace(/[ \t]+\n/g, "\n");
+    // Collapse nested identical wraps that browsers sometimes emit when a color/font is applied on
+    // top of an already-styled span — keeps the stored markdown clean (no {{orange:{{orange:…}}}}).
+    let prev;
+    do {
+      prev = out;
+      out = out.replace(/\{\{(\w+):\{\{\1:([^{}]*)\}\}\}\}/g, "{{$1:$2}}");
+      out = out.replace(/\{\{font:([^|{}]+)\|\{\{font:\1\|([^{}]*)\}\}\}\}/g, "{{font:$1|$2}}");
+    } while (out !== prev);
+    return out;
   }
 
   function createNote(title, body, extra) {

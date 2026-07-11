@@ -1067,23 +1067,24 @@ canvas.chart { width: 100%; }
 /* Rich-text (contenteditable) note editor — WYSIWYG: bold/italic/underline/color/font apply
    instantly via execCommand, no separate Preview step. Body is serialized back to markdown
    on every edit (see serializeEditor in notes.js) so export/graph/search stay text-based. */
-#note-editor {
+#note-editor, #card-editor {
   min-height: 140px; font-family: var(--font-main); font-size: .86rem; line-height: 1.65; color: var(--text);
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 14px 16px; overflow-wrap: break-word; outline: none; transition: border-color var(--speed) var(--ease);
 }
-#note-editor:focus { border-color: var(--line-strong); }
+#note-editor:focus, #card-editor:focus { border-color: var(--line-strong); }
 #note-editor:empty::before { content: "Start typing… try [[Note Title]] to auto-link."; color: var(--text-tertiary); pointer-events: none; }
-#note-editor h1, #note-editor h2, #note-editor h3 { margin: 10px 0 6px; letter-spacing: -.02em; }
-#note-editor blockquote { border-left: 2px solid var(--line-strong); padding-left: 10px; color: var(--muted2); margin: 6px 0; }
-#note-editor pre { background: var(--card2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
-#note-editor code { font-family: var(--font-mono); }
-#note-editor .wikilink {
+#card-editor:empty::before { content: "Type your notecard… try [[Note Title]] to auto-link."; color: var(--text-tertiary); pointer-events: none; }
+#note-editor h1, #note-editor h2, #note-editor h3, #card-editor h1, #card-editor h2, #card-editor h3 { margin: 10px 0 6px; letter-spacing: -.02em; }
+#note-editor blockquote, #card-editor blockquote { border-left: 2px solid var(--line-strong); padding-left: 10px; color: var(--muted2); margin: 6px 0; }
+#note-editor pre, #card-editor pre { background: var(--card2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
+#note-editor code, #card-editor code { font-family: var(--font-mono); }
+#note-editor .wikilink, #card-editor .wikilink {
   display: inline-flex; align-items: center; gap: 3px; background: var(--card2); border: 1px solid var(--line);
   border-radius: var(--radius-sm); padding: 1px 6px; font-size: .82em; cursor: pointer; color: var(--accent);
   transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease);
 }
-#note-editor .wikilink:hover { border-color: var(--accent); background: var(--card); }
+#note-editor .wikilink:hover, #card-editor .wikilink:hover { border-color: var(--accent); background: var(--card); }
 .md-preview { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 16px; font-size: .84rem; line-height: 1.6; overflow-wrap: break-word; color: var(--text); }
 
 /* Note title row — title input + color-tag picker */
@@ -1108,6 +1109,68 @@ canvas.chart { width: 100%; }
 .fmt-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
 .fmt-color-swatch { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--line); padding: 0; cursor: pointer; transition: transform var(--speed) var(--ease); }
 .fmt-color-swatch:hover { transform: scale(1.2); }
+
+/* Note-list previews render inline formatting (color/bold/italic/font) instead of raw markup —
+   clamp to a few lines so long notes stay tidy in the grid. */
+.note-tile-snip {
+  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical;
+  max-height: 4.6em; word-break: break-word;
+}
+.note-tile-snip code { font-family: var(--font-mono); font-size: .92em; }
+
+/* Notes list — canvas scope selector + hint */
+.notes-scope-hint { font-size: .74rem; color: var(--muted2); margin: -4px 0 12px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: var(--radius-sm); }
+.note-tpl-wrap { position: relative; }
+#canvas-select { font-size: .76rem; max-width: 190px; }
+
+/* Canvas card — rich-text body (renders formatting in read mode, editable on click) + inline toolbar */
+.canvas-card-body {
+  flex: 1; overflow: auto; font-size: .8rem; line-height: 1.5; padding: 8px; color: var(--text);
+  outline: none; overflow-wrap: break-word; cursor: text;
+}
+.canvas-card-body:empty::before { content: attr(data-ph); color: var(--text-tertiary); pointer-events: none; }
+.canvas-card-body h1, .canvas-card-body h2, .canvas-card-body h3 { font-size: .92rem; margin: 4px 0 2px; }
+.canvas-card-body code { font-family: var(--font-mono); font-size: .92em; }
+.canvas-card-body .wikilink { color: var(--accent); cursor: pointer; }
+.canvas-card-fmt {
+  display: flex; align-items: center; gap: 3px; flex-wrap: wrap; padding: 4px 6px; flex-shrink: 0;
+  border-bottom: 1px solid var(--line); background: var(--overlay2);
+}
+.canvas-card-fmt.hidden { display: none; }
+.canvas-card-fmt .icon-btn { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: .72rem; }
+.canvas-card-fmt .fmt-color-swatch { width: 13px; height: 13px; }
+.canvas-card-fmt .card-fmt-font { font-size: .66rem; padding: 1px 2px; max-width: 62px; height: 20px; }
+
+/* "Why are you avoiding this?" — single clean free-text box (replaces the old radio list) */
+.pl-reason-box { min-height: 96px; width: 100%; line-height: 1.5; }
+
+/* Avoidance reasons popup — grouped themes + donut */
+.avoid-top { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.avoid-groups { max-height: 46vh; overflow-y: auto; }
+.avoid-group { border-top: 1px solid var(--line); padding: 8px 0; }
+.avoid-group summary { cursor: pointer; font-size: .84rem; list-style: none; }
+.avoid-group summary::-webkit-details-marker { display: none; }
+.avoid-item { font-size: .78rem; color: var(--text); padding: 5px 0 5px 14px; border-left: 2px solid var(--line); margin: 4px 0 4px 4px; }
+.avoid-date { color: var(--text-tertiary); font-size: .68rem; font-variant-numeric: tabular-nums; margin-right: 6px; }
+
+/* Timebox month — per-day color-coded task pills (default purple accent) */
+.tb-month-cell { min-height: 96px; aspect-ratio: auto; overflow: hidden; }
+.tb-month-events { display: flex; flex-direction: column; gap: 2px; width: 100%; overflow: hidden; }
+.tb-month-ev {
+  --evc: var(--accent);
+  font-size: .62rem; line-height: 1.25; text-align: left; width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 1px 5px; border-radius: 3px; border-left: 3px solid var(--evc);
+  background: color-mix(in srgb, var(--evc) 18%, transparent); color: var(--text);
+}
+.tb-month-ev-time { color: color-mix(in srgb, var(--evc) 60%, var(--text-tertiary)); font-variant-numeric: tabular-nums; margin-right: 2px; }
+.tb-month-more { font-size: .6rem; color: var(--text-tertiary); padding-left: 5px; }
+
+/* Seamless zoom animations between Timebox day ⟷ month */
+.tb-zoom-out { animation: tbZoomOut .22s var(--ease); }
+.tb-zoom-in { animation: tbZoomIn .22s var(--ease); }
+@keyframes tbZoomOut { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: scale(1); } }
+@keyframes tbZoomIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
 
 /* Version history modal */
 .history-row {

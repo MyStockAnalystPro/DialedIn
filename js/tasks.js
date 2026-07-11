@@ -339,6 +339,7 @@ const Tasks = (() => {
   let tbViewDate = null;   // yyyy-mm-dd shown in the Timebox day grid; null = today
   let tbViewMode = "day";  // day | month — the Timebox zoom level
   let tbMonthCursor = null; // yyyy-mm for month view
+  let tbZoomDir = null;    // "in" | "out" — drives the seamless zoom animation on the next render
 
   function renderTasksView() {
     const v = $("#view-tasks");
@@ -738,17 +739,38 @@ const Tasks = (() => {
     UI.toast("Added to the pool — drag it onto the calendar, or click-drag to draw a block");
   }
 
-  // Global Escape handler — the only remaining zoom step is Month → Day; the old "zoom into an
-  // hour to see minutes" stage is gone entirely now that the day grid shows exact minutes always.
+  // Global keyboard zoom handler for the Timebox. Day ⟷ Month is the only zoom step (the day grid
+  // already shows exact minutes). Zoom OUT (day→month): ArrowUp, "-" or Esc. Zoom IN (month→day):
+  // ArrowDown or "+". Each sets tbZoomDir so the next render plays a seamless scale animation.
   let tbEscHandler = null;
+  function zoomOutToMonth() {
+    if (tbViewMode !== "month") { tbViewMode = "month"; tbMonthCursor = tbDate().slice(0, 7); tbZoomDir = "out"; renderTimeboxView(); }
+  }
+  function zoomInToDay() {
+    if (tbViewMode !== "day") { tbViewMode = "day"; tbZoomDir = "in"; renderTimeboxView(); }
+  }
+  // Consumes the pending zoom direction and returns the matching animation class for the card.
+  function tbAnimClass() {
+    const c = tbZoomDir === "out" ? "tb-zoom-out" : tbZoomDir === "in" ? "tb-zoom-in" : "tb-fade-in";
+    tbZoomDir = null;
+    return c;
+  }
   function bindTbEscHandler() {
     if (tbEscHandler) document.removeEventListener("keydown", tbEscHandler);
     tbEscHandler = e => {
-      if (e.key !== "Escape") return;
-      if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
       const view = document.getElementById("view-timebox");
       if (!view || !view.classList.contains("active")) return;
-      if (tbViewMode === "month") { tbViewMode = "day"; renderTimeboxView(); }
+      if (tbViewMode === "month") {
+        if (e.key === "Escape" || e.key === "ArrowDown" || e.key === "+" || e.key === "=") {
+          // Only auto-zoom-in on Esc / ArrowDown+ when no specific day cell is focused (cells handle
+          // their own Enter/ArrowUp to zoom into that exact day).
+          if (e.key === "Escape" || !document.activeElement.classList.contains("tb-month-cell")) { e.preventDefault(); zoomInToDay(); }
+        }
+      } else {
+        if (e.key === "ArrowUp" || e.key === "-" || e.key === "_") { e.preventDefault(); zoomOutToMonth(); }
+      }
     };
     document.addEventListener("keydown", tbEscHandler);
   }
@@ -769,7 +791,7 @@ const Tasks = (() => {
     const tmrwStr = Store.todayStr(new Date(dateObj.getTime() + 864e5));
 
     v.innerHTML = `
-      <div class="card tb-fade-in"><h2>Time Boxing
+      <div class="card ${tbAnimClass()}"><h2>Time Boxing
           <button class="icon-btn" id="tb-prev-day" title="Previous day"><i class="ico" data-ico="chevron" style="transform:rotate(180deg);display:inline-block"></i></button>
           <span class="tb-date-label">${dateLabel}${viewDate === today ? " · Today" : ""}</span>
           <button class="icon-btn" id="tb-next-day" title="Next day"><i class="ico" data-ico="chevron"></i></button>
@@ -783,7 +805,7 @@ const Tasks = (() => {
             <button class="btn sm primary" id="tb-apply-routine" title="Apply your saved routine — recreates tasks & schedule, no retyping">Apply routine${Store.s.routine ? "" : " (none saved)"}</button>
           ` : ""}
         </h2>
-        <div class="card-sub">Drag a task from the pool onto the calendar, or click-drag directly on the grid to draw a block at the exact minute you want. Drag a block to move it, drag its bottom edge to resize, click it to rename, time, color, or link it to a task. Scroll past the bottom (or Esc) to zoom out to the month view.</div>
+        <div class="card-sub">Drag a task from the pool onto the calendar, or click-drag directly on the grid to draw a block at the exact minute you want. Drag a block to move it, drag its bottom edge to resize, click it to rename, time, color, or link it to a task. Zoom out to the month calendar by scrolling up past the top (or pressing <kbd>↑</kbd> / <kbd>-</kbd>).</div>
         <div class="quickadd-row" style="margin-bottom:12px">
           <input type="text" id="tb-quick-add" placeholder="Add a task for ${viewDate === today ? "today" : dateLabel}…">
           <button class="btn primary" id="tb-quick-add-btn">＋ Add</button>
@@ -890,11 +912,19 @@ const Tasks = (() => {
       Store.save(); renderTimeboxView();
     });
 
-    // Scrolling past the very bottom of the day zooms out to the month view; Esc reverses it.
+    // Scrolling/trackpad-panning up past the very top (or down past the very bottom) zooms out to
+    // the month calendar; ArrowUp / "-" / Esc do the same. A small accumulator stops a normal scroll
+    // that merely reaches an edge from instantly zooming — you have to keep pushing against it.
+    let tbEdgePush = 0;
     scrollWrap.addEventListener("wheel", e => {
-      if (e.deltaY > 0 && scrollWrap.scrollTop >= scrollWrap.scrollHeight - scrollWrap.clientHeight - 2) {
+      const atTop = scrollWrap.scrollTop <= 1;
+      const atBottom = scrollWrap.scrollTop >= scrollWrap.scrollHeight - scrollWrap.clientHeight - 2;
+      if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) {
         e.preventDefault();
-        tbViewMode = "month"; tbMonthCursor = viewDate.slice(0, 7); renderTimeboxView();
+        tbEdgePush += Math.abs(e.deltaY);
+        if (tbEdgePush > 60) { tbEdgePush = 0; zoomOutToMonth(); }
+      } else {
+        tbEdgePush = 0;
       }
     }, { passive: false });
   }
@@ -960,32 +990,41 @@ const Tasks = (() => {
     for (let i = 0; i < startDow; i++) cells.push(null);
     for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
+    const MAX_EV = 4;
     v.innerHTML = `
-      <div class="card tb-fade-in">
+      <div class="card ${tbAnimClass()}">
         <h2>
           <button class="icon-btn" id="tb-m-prev" title="Previous month"><i class="ico" data-ico="chevron" style="transform:rotate(180deg);display:inline-block"></i></button>
           <span class="tb-date-label">${monthLabel}</span>
           <button class="icon-btn" id="tb-m-next" title="Next month"><i class="ico" data-ico="chevron"></i></button>
+          <span class="spacer"></span>
+          <button class="btn sm" id="tb-m-today">Today</button>
         </h2>
-        <div class="card-sub">Click a day, or focus it and press ↑/Enter, or scroll up on it, to zoom into its minute-precision calendar. Esc jumps back.</div>
+        <div class="card-sub">Each day shows its time-boxed tasks, color-coded (default purple — change a block's color in the day view). Click a day, or focus it and press <kbd>↑</kbd>/<kbd>Enter</kbd>, or scroll up on it, to zoom into its minute-precision calendar. <kbd>↓</kbd>/<kbd>Esc</kbd> jumps back.</div>
         <div class="tb-month-grid" id="tb-month-grid">
           ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => `<div class="tb-month-dow">${d}</div>`).join("")}
           ${cells.map(d => {
             if (!d) return `<div class="tb-month-cell empty"></div>`;
             const dateStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-            const count = tbCount(dateStr);
+            const blocks = tbBlocksFor(dateStr).slice().sort((a, b) => a.start - b.start);
+            const evs = blocks.slice(0, MAX_EV).map(b => {
+              const hex = b.color ? (TB_COLORS.find(c => c.id === b.color) || {}).hex : null;
+              return `<span class="tb-month-ev"${hex ? ` style="--evc:${hex}"` : ""}><span class="tb-month-ev-time">${tbMinToLabel(b.start)}</span> ${esc(b.title || "Untitled")}</span>`;
+            }).join("");
+            const more = blocks.length > MAX_EV ? `<span class="tb-month-more">+${blocks.length - MAX_EV} more</span>` : "";
             return `<button class="tb-month-cell ${dateStr === today ? "today" : ""}" data-date="${dateStr}">
               <span class="tb-month-daynum">${d}</span>
-              ${count ? `<span class="tb-month-count">${count} boxed</span>` : ""}
+              <span class="tb-month-events">${evs}${more}</span>
             </button>`;
           }).join("")}
         </div>
       </div>`;
     UI.mountIcons(v);
+    $("#tb-m-today").onclick = () => { tbViewDate = today; tbMonthCursor = today.slice(0, 7); tbViewMode = "day"; tbZoomDir = "in"; renderTimeboxView(); };
 
     $("#tb-m-prev").onclick = () => { const nd = new Date(y, m - 2, 1); tbMonthCursor = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, "0")}`; renderTimeboxView(); };
     $("#tb-m-next").onclick = () => { const nd = new Date(y, m, 1); tbMonthCursor = `${nd.getFullYear()}-${String(nd.getMonth() + 1).padStart(2, "0")}`; renderTimeboxView(); };
-    const zoomIntoDay = dateStr => { tbViewDate = dateStr; tbViewMode = "day"; renderTimeboxView(); };
+    const zoomIntoDay = dateStr => { tbViewDate = dateStr; tbViewMode = "day"; tbZoomDir = "in"; renderTimeboxView(); };
     v.querySelectorAll(".tb-month-cell[data-date]").forEach(c => {
       c.onclick = () => zoomIntoDay(c.dataset.date);
       c.addEventListener("keydown", e => {
