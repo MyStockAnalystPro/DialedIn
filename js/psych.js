@@ -53,27 +53,29 @@ const Psych = (() => {
   }
 
   /* ---------- Procrastination Log ---------- */
-  const REASONS = ["😴 Tired", "😵 Confused / don't know how to start", "😰 Overwhelmed — too big", "🥱 Boring", "😨 Afraid to fail", "📱 Distracted by something fun", "🤷 No clear next step", "⏰ 'No time' (allegedly)"];
+  // Free-text now (no canned radio options) — just a clean single box to name the real reason in
+  // your own words. Analytics groups these into themes automatically (see Analytics → Avoidance).
   function procrastinationLog(task) {
     modal("😩 Why are you avoiding this?", `
-      <p class="muted" style="font-size:.82rem;margin-bottom:10px">"${esc(task.title)}" — no judgment. Naming the resistance shrinks it.</p>
-      ${REASONS.map((r, i) => `<label class="check"><input type="radio" name="pl" value="${i}"> ${r}</label>`).join("")}`,
+      <p class="muted" style="font-size:.82rem;margin-bottom:12px">"${esc(task.title)}" — no judgment. Naming the resistance in your own words shrinks it.</p>
+      <textarea id="pl-text" class="pl-reason-box" placeholder="Type it out… e.g. it feels too big, I keep watching YouTube, I'm just tired…"></textarea>`,
       [
         { label: "Cancel" },
         { label: "Log it", cls: "primary", onClick: m => {
-          const sel = m.querySelector('input[name="pl"]:checked');
-          if (!sel) return false;
-          const reason = REASONS[+sel.value];
+          const reason = m.querySelector("#pl-text").value.trim();
+          if (reason.length < 2) { toast("Write a few words about the real reason.", "bad"); return false; }
           Store.s.procrastinationLog.push({ ts: Date.now(), taskId: task.id, taskTitle: task.title, reason });
           Store.save();
-          toast("Logged. Patterns show up in Analytics. 🔍");
-          if (reason.includes("Overwhelmed") || reason.includes("Confused") || reason.includes("next step")) {
+          toast("Logged. Patterns show up in Analytics → Avoidance. 🔍");
+          const low = reason.toLowerCase();
+          if (/(overwhelm|too big|too much|confus|don'?t know|no idea|next step|where to start|stuck)/.test(low)) {
             setTimeout(() => microSteps(task), 400);
-          } else if (reason.includes("Tired")) {
+          } else if (/(tired|sleepy|exhaust|no energy|drained)/.test(low)) {
             toast("Tired? Try the 🚪 Just-5-Minutes timer — tiny commitment, real momentum.", "", 4500);
           }
         }},
-      ]);
+      ], { sticky: true });
+    setTimeout(() => $("#pl-text")?.focus(), 60);
   }
 
   /* ---------- Micro-Step Generator ---------- */
