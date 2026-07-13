@@ -81,22 +81,9 @@ const Notes = (() => {
     return "#" + m.slice(0, 3).map(x => (+x).toString(16).padStart(2, "0")).join("");
   }
 
-  // Converts bare shorthand (red:Food, font:Cursive|text) into canonical {{…}} tokens before render.
+  // Converts bare shorthand (red:Food, bold:Hi, font:Cursive|text) into canonical {{…}} tokens.
   function normalizeMarkupSource(src) {
-    if (!src) return "";
-    let s = src;
-    NOTE_COLORS.forEach(c => {
-      // Match at start, after whitespace, or after common punctuation — never inside {{…}} tokens.
-      const re = new RegExp(`(^|[\\s(,\\[\\{])(${c.id}):([^\\s\\{\\}\\n|,;]+)`, "gi");
-      s = s.replace(re, (m, pre, id, text) => `${pre}{{${c.id}:${text.trim()}}}`);
-    });
-    s = s.replace(/(?:^|[\s(,])font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
-      const trimmed = text.trim();
-      if (trimmed.startsWith("{{")) return m;
-      const lead = m.startsWith(" ") || m.startsWith("\t") ? " " : "";
-      return `${lead}{{font:${font.trim()}|${trimmed}}}`;
-    });
-    return s.trim();
+    return NotecardRenderer.normalizeSource(src);
   }
 
   function normalizeNoteBody(n) {
@@ -105,42 +92,41 @@ const Notes = (() => {
     if (norm !== n.body) n.body = norm;
   }
 
-  // Iteratively resolves nested {{color:…}} / {{font:…|…}} innermost-first.
-  function renderStyledTokens(html) {
+  function resolveInlineStyledMarkup(html) {
     let out = html, prev = "";
     while (out !== prev) {
       prev = out;
-      out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
-        const c = NOTE_COLORS.find(cc => cc.id === colorId);
-        return c ? `<span class="rt-color" style="color:${c.hex} !important">${text}</span>` : text;
+      out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, inner) =>
+        NotecardRenderer.astToHtml([{ type: "font", font: font.trim(), children: NotecardRenderer.parse(inner) }]));
+      out = out.replace(/\{\{(\w+):([^{}]+)\}\}/g, (m, kind, inner) => {
+        const id = kind.toLowerCase();
+        const children = NotecardRenderer.parse(inner);
+        if (NotecardRenderer.COLOR_IDS.includes(id))
+          return NotecardRenderer.astToHtml([{ type: "color", color: id, children }]);
+        if (NotecardRenderer.STYLE_IDS.includes(id))
+          return NotecardRenderer.astToHtml([{ type: id, children }]);
+        return m;
       });
-      out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
-        `<span class="rt-font" style="font-family:${font} !important">${text}</span>`);
     }
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong class="nc-bold">$1</strong>');
+    out = out.replace(/__([^_]+)__/g, '<u class="nc-underline">$1</u>');
+    out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em class=\"nc-italic\">$2</em>");
     return out;
   }
 
-  // Fast path for inline rich text — used on canvas previews and note tiles.
-  function renderRichText(src) {
-    if (!src) return "";
-    let out = esc(normalizeMarkupSource(src));
-    out = renderStyledTokens(out);
-    NOTE_COLORS.forEach(c => {
-      const re = new RegExp(`(^|[^\\w>])(?:&amp;)?(${c.id}):([^\\s<&]+)`, "gi");
-      out = out.replace(re, (m, pre, id, text) =>
-        `${pre}<span class="rt-color" style="color:${c.hex} !important">${text}</span>`);
-    });
-    out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-    out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
-    out = out.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
-    return out;
+  // Renders parsed AST as HTML — tokens never appear as plain strings.
+  function renderRichText(src, opts = {}) {
+    return NotecardRenderer.toHtml(src, opts);
   }
 
   function bodyForRender(n) {
-    const raw = (n?.body || "").trim();
-    let body = normalizeMarkupSource(raw);
-    if (n?.font && body && !body.includes("{{font:")) body = `{{font:${n.font}|${body}}}`;
-    return body;
+    return { text: (n?.body || "").trim(), font: n?.font || null };
+  }
+
+  function noteMarkupSource(n) {
+    let src = normalizeMarkupSource(n?.body || "");
+    if (n?.font && src && !src.includes("{{font:")) src = `{{font:${n.font}|${src}}}`;
+    return src;
   }
 
   function cardBodyText(card, n) {
@@ -191,16 +177,7 @@ const Notes = (() => {
     out = out.replace(/^- \[ \] (.*)$/gm, '<div>⬜ $1</div>');
     out = out.replace(/^(\s*)- (.*)$/gm, "$1<li>$2</li>");
     out = out.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-    out = renderStyledTokens(out);
-    // Catch any bare color:word still visible (e.g. mid-typing before normalize saved)
-    NOTE_COLORS.forEach(c => {
-      const re = new RegExp(`(^|[^\\w>])(?:&amp;)?(${c.id}):([^\\s<&]+)`, "gi");
-      out = out.replace(re, (m, pre, id, text) => `${pre}<span style="color:${c.hex}">${text}</span>`);
-    });
-    // bold / italic / underline / inline code
-    out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-    out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
-    out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
+    out = resolveInlineStyledMarkup(out);
     out = out.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     // paragraphs
     out = out.replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>");
@@ -315,7 +292,19 @@ const Notes = (() => {
   }
 
   function renderNoteBodyHtml(n) {
-    return renderRichText(bodyForRender(n));
+    const { text, font } = bodyForRender(n);
+    return renderRichText(text, { font });
+  }
+
+  function mountNoteBody(el, n) {
+    const { text, font } = bodyForRender(n);
+    if (text || font) NotecardRenderer.mount(el, text, { font });
+    else NotecardRenderer.unmount(el);
+  }
+
+  function refreshCanvasEditorContent(ed, n) {
+    const { text, font } = bodyForRender(n);
+    ed.innerHTML = renderRichText(text, { font }) || "";
   }
 
   function notePreviewHtml(n) {
@@ -337,20 +326,21 @@ const Notes = (() => {
     sel.addRange(range);
   }
 
-  function prettyPrintEditor(ed, n) {
+  function prettyPrintEditor(ed, n, canvasInline = false) {
     if (!ed || !n) return;
     const caret = saveCaret(ed);
     n.body = normalizeMarkupSource(serializeEditor(ed));
-    refreshEditorContent(ed, n);
+    if (canvasInline) refreshCanvasEditorContent(ed, n);
+    else refreshEditorContent(ed, n);
     restoreCaret(ed, caret);
     Store.save();
   }
 
   const prettyPrintTimers = new Map();
-  function schedulePrettyPrint(ed, n, ms = 280) {
-    const key = n?.id || "default";
+  function schedulePrettyPrint(ed, n, ms = 280, canvasInline = false) {
+    const key = (n?.id || "default") + (canvasInline ? "-canvas" : "");
     clearTimeout(prettyPrintTimers.get(key));
-    prettyPrintTimers.set(key, setTimeout(() => prettyPrintEditor(ed, n), ms));
+    prettyPrintTimers.set(key, setTimeout(() => prettyPrintEditor(ed, n, canvasInline), ms));
   }
 
   function noteMatchesSearch(n, q) {
@@ -416,8 +406,11 @@ const Notes = (() => {
         <span class="note-tile-title">${esc(n.title || "Untitled")}</span>
         <button class="icon-btn note-tile-del" title="Delete"><i class="ico" data-ico="x"></i></button>
       </div>
-      <div class="note-tile-snip md-preview">${(n.body?.trim() || n.font) ? notePreviewHtml(n) : '<span class="muted2">Empty note</span>'}</div>`;
+      <div class="note-tile-snip md-preview notecard-render-host"></div>`;
     UI.mountIcons(tile);
+    const snipHost = tile.querySelector(".notecard-render-host");
+    if (n.body?.trim() || n.font) mountNoteBody(snipHost, n);
+    else snipHost.innerHTML = '<span class="muted2">Empty note</span>';
     tile.querySelector(".note-tile-del").onclick = e => {
       e.stopPropagation();
       detachNoteFromCanvases(n.id);
@@ -1130,7 +1123,8 @@ const Notes = (() => {
           ${NOTE_COLORS.map(c => `<button type="button" class="canvas-fmt-color" data-color="${c.id}" style="background:${c.hex}" title="Text ${c.id}"></button>`).join("")}
         </div>
         <div class="canvas-card-body-wrap">
-          <div class="canvas-card-body" contenteditable="true" data-placeholder="Click to type…"></div>
+          <div class="notecard-render-host"></div>
+          <div class="canvas-card-body hidden" contenteditable="true" data-placeholder="Click to type…"></div>
         </div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
@@ -1147,17 +1141,47 @@ const Notes = (() => {
 
       const colorPop = d.querySelector(".canvas-color-pop");
       const fontPop = d.querySelector(".canvas-font-pop");
+      const renderHost = d.querySelector(".notecard-render-host");
       const bodyEd = d.querySelector(".canvas-card-body");
 
-      function syncCardBodyFromNote() {
+      function syncCardDisplay() {
         if (!n) return;
         const text = cardBodyText(card, n);
         if (text && text !== n.body) n.body = normalizeMarkupSource(text);
         normalizeNoteBody(n);
-        refreshEditorContent(bodyEd, n);
+        if (!n.body?.trim() && !n.font) {
+          NotecardRenderer.unmount(renderHost);
+          renderHost.innerHTML = '<span class="muted2">Click to type…</span>';
+        } else {
+          NotecardRenderer.mount(renderHost, n.body, { font: n.font });
+        }
+        renderHost.classList.remove("hidden");
+        bodyEd.classList.add("hidden");
       }
 
-      syncCardBodyFromNote();
+      function enterCardEdit() {
+        if (!n) return;
+        const text = cardBodyText(card, n);
+        if (text) n.body = normalizeMarkupSource(text);
+        NotecardRenderer.unmount(renderHost);
+        renderHost.classList.add("hidden");
+        bodyEd.classList.remove("hidden");
+        refreshCanvasEditorContent(bodyEd, n);
+        bodyEd.focus();
+      }
+
+      function exitCardEdit() {
+        if (!n) return;
+        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
+        delete card.text; delete card.title;
+        syncWikiLinks(n);
+        Store.save();
+        bodyEd.classList.add("hidden");
+        syncCardDisplay();
+        onNoteDataChange(n);
+      }
+
+      syncCardDisplay();
 
       const titleInput = d.querySelector(".canvas-card-title");
       d.querySelectorAll(".canvas-color-swatch").forEach(sw => sw.onclick = e => {
@@ -1170,6 +1194,7 @@ const Notes = (() => {
         fontPop.classList.add("hidden");
         const font = sw.dataset.font;
         if (font && n) {
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           applyCanvasCmd(bodyEd, "fontName", font);
           commitCanvasBody(bodyEd, n);
         }
@@ -1177,12 +1202,20 @@ const Notes = (() => {
 
       titleInput.oninput = () => { if (n) { n.title = titleInput.value; onNoteDataChange(n); } };
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
-      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
+      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); enterCardEdit(); } });
+
+      renderHost.onclick = e => { e.stopPropagation(); enterCardEdit(); };
+      renderHost.addEventListener("mousedown", e => e.stopPropagation());
+      d.querySelector(".canvas-card-body-wrap").onclick = e => {
+        e.stopPropagation();
+        if (bodyEd.classList.contains("hidden")) enterCardEdit();
+      };
 
       d.querySelectorAll(".canvas-fmt-btn").forEach(b => {
         b.addEventListener("mousedown", e => e.preventDefault());
         b.onclick = e => {
           e.stopPropagation();
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           applyCanvasCmd(bodyEd, b.dataset.cmd);
           commitCanvasBody(bodyEd, n);
         };
@@ -1191,6 +1224,7 @@ const Notes = (() => {
         sw.addEventListener("mousedown", e => e.preventDefault());
         sw.onclick = e => {
           e.stopPropagation();
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           const c = NOTE_COLORS.find(x => x.id === sw.dataset.color);
           if (c) applyCanvasCmd(bodyEd, "foreColor", c.hex);
           commitCanvasBody(bodyEd, n);
@@ -1201,17 +1235,9 @@ const Notes = (() => {
         n.body = serializeEditor(bodyEd);
         Store.save();
         if (typeof Undo !== "undefined") Undo.recordDebounced("canvas-card-" + n.id);
-        schedulePrettyPrint(bodyEd, n, 80);
+        schedulePrettyPrint(bodyEd, n, 80, true);
       };
-      bodyEd.onblur = () => {
-        if (!n) return;
-        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
-        delete card.text; delete card.title;
-        syncWikiLinks(n);
-        Store.save();
-        refreshEditorContent(bodyEd, n);
-        onNoteDataChange(n);
-      };
+      bodyEd.onblur = () => exitCardEdit();
       bodyEd.addEventListener("mousedown", e => e.stopPropagation());
       d.querySelector(".canvas-card-body-wrap").addEventListener("mousedown", e => e.stopPropagation());
 
@@ -1360,7 +1386,7 @@ const Notes = (() => {
     if (!n) return;
     n.body = normalizeMarkupSource(serializeEditor(bodyEd));
     Store.save();
-    refreshEditorContent(bodyEd, n);
+    refreshCanvasEditorContent(bodyEd, n);
     onNoteDataChange(n);
   }
 
@@ -1401,14 +1427,17 @@ const Notes = (() => {
       case "span": {
         let content = inner();
         const st = node.style;
-        // execCommand with styleWithCSS=true emits inline-styled <span>s instead of semantic
-        // <b>/<i>/<u> tags in Chromium — so bold/italic/underline have to be detected here too,
-        // not just on the b/i/u tag cases above.
-        const decoration = (st && (st.textDecorationLine || st.textDecoration)) || "";
-        if (decoration.includes("underline")) content = `__${content}__`;
-        if (st && st.fontStyle === "italic") content = `*${content}*`;
-        const weight = st && st.fontWeight;
-        if (weight === "bold" || weight === "700" || (parseInt(weight, 10) >= 600)) content = `**${content}**`;
+        const cls = node.classList;
+        if (cls?.contains("nc-bold")) content = `{{bold:${content}}}`;
+        else if (cls?.contains("nc-italic")) content = `{{italic:${content}}}`;
+        else if (cls?.contains("nc-underline")) content = `__${content}__`;
+        else {
+          const decoration = (st && (st.textDecorationLine || st.textDecoration)) || "";
+          if (decoration.includes("underline")) content = `__${content}__`;
+          if (st && st.fontStyle === "italic") content = `*${content}*`;
+          const weight = st && st.fontWeight;
+          if (weight === "bold" || weight === "700" || (parseInt(weight, 10) >= 600)) content = `**${content}**`;
+        }
         const hex = rgbToHex(st && st.color);
         const c = hex && NOTE_COLORS.find(cc => cc.hex.toLowerCase() === hex.toLowerCase());
         if (c) content = `{{${c.id}:${content}}}`;
@@ -1449,7 +1478,7 @@ const Notes = (() => {
   // after every blur — a full "commit & pretty-print" pass — but never mid-keystroke, so it
   // can't yank the caret out from under an active typing session.
   function refreshEditorContent(ed, n) {
-    ed.innerHTML = renderMarkdown(bodyForRender(n)) || "";
+    ed.innerHTML = renderMarkdown(noteMarkupSource(n)) || "";
     ed.querySelectorAll(".wikilink").forEach(w => w.onclick = () => {
       const target = findOrCreateByTitle(w.dataset.wiki);
       n.links = n.links || []; target.links = target.links || [];
