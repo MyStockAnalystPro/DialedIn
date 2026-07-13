@@ -497,8 +497,11 @@ const UI = (() => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName)) return true;
     if (ae.isContentEditable) return true;
     if (!$("#quick-bar")?.classList.contains("hidden")) return true;
-    if (!$("#scratchpad")?.classList.contains("hidden") && ae === $("#scratch-text")) return true;
+    if (!$("#scratchpad")?.classList.contains("hidden")) return true;
     if ($("#modal-root")?.children.length) return true;
+    if (document.querySelector(".note-modal-back")) return true;
+    const typingSel = "#note-editor, #note-title, #j-entry, #j-grat, #bd-text, #task-search, #quick-add-input, #quick-bar-input, #scratch-text, #set-css, .modal";
+    if (ae.closest && ae.closest(typingSel)) return true;
     return false;
   }
   function initShortcuts() {
@@ -537,7 +540,7 @@ const UI = (() => {
   /* ---------- Global Command Palette (Ctrl/Cmd+K) — site-wide search + jump + highlight ---------- */
   const SEARCH_SYNONYMS = {
     pulse: ["timer", "pomodoro", "stopwatch", "focus session", "the pulse"],
-    focus: ["deep work", "concentration", "focus time"],
+    focus: ["deep work", "concentration", "focus time", "focus-to-distraction", "focus distribution", "distraction ratio"],
     zen: ["minimal mode", "minimal", "distraction free"],
     streak: ["days", "flame", "multiplier"],
     boss: ["boss battle", "project", "hp"],
@@ -603,13 +606,41 @@ const UI = (() => {
 
   function navigateAndHighlight(viewName, findText, query) {
     showView(viewName);
-    requestAnimationFrame(() => {
+    const needle = findText || query;
+    let found = false;
+    [120, 320, 650].forEach(ms => {
       setTimeout(() => {
+        if (found) return;
         const container = $("#view-" + viewName);
-        const target = findTextTarget(container, findText || query);
-        highlightElement(target);
-      }, 100);
+        const target = findTextTarget(container, needle);
+        if (target) { found = true; highlightElement(target); }
+      }, ms);
     });
+  }
+
+  function scanLivePageText() {
+    const seen = new Set();
+    const entries = [];
+    const views = ["dashboard", "tasks", "timebox", "quests", "skills", "shop", "notes", "journal", "braindump", "analytics", "wellness", "automation", "settings"];
+    views.forEach(viewName => {
+      const container = $("#view-" + viewName);
+      if (!container || !container.textContent.trim()) return;
+      container.querySelectorAll("h2, h3, .zone-label, .stat-line > span:first-child, .card-sub, .ritual-k").forEach(el => {
+        const title = el.textContent.replace(/\s+/g, " ").trim().slice(0, 90);
+        if (title.length < 4) return;
+        const key = viewName + "|" + title.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        entries.push({
+          title,
+          sub: viewName + " · on page",
+          icon: "search",
+          body: title.toLowerCase(),
+          run: () => navigateAndHighlight(viewName, title, title.toLowerCase()),
+        });
+      });
+    });
+    return entries;
   }
 
   function siteEntry(title, sub, icon, view, findText, keywords = []) {
@@ -696,6 +727,13 @@ const UI = (() => {
         body: [date, j.prompt, j.entry, j.gratitude].join(" ").toLowerCase(),
         run: () => { showView("journal"); setTimeout(() => highlightElement(findTextTarget($("#view-journal"), date)), 120); },
       });
+    });
+
+    const seenTitles = new Set(cmds.map(c => c.title.toLowerCase()));
+    scanLivePageText().forEach(entry => {
+      if (seenTitles.has(entry.title.toLowerCase())) return;
+      seenTitles.add(entry.title.toLowerCase());
+      cmds.push(entry);
     });
 
     return cmds;
