@@ -57,20 +57,26 @@ const Psych = (() => {
   function procrastinationLog(task) {
     modal("😩 Why are you avoiding this?", `
       <p class="muted" style="font-size:.82rem;margin-bottom:10px">"${esc(task.title)}" — no judgment. Naming the resistance shrinks it.</p>
-      ${REASONS.map((r, i) => `<label class="check"><input type="radio" name="pl" value="${i}"> ${r}</label>`).join("")}`,
+      ${REASONS.map((r, i) => `<label class="check"><input type="radio" name="pl" value="${i}"> ${r}</label>`).join("")}
+      <label class="field" style="margin-top:12px"><span>Or describe in your own words (any language)</span>
+        <input type="text" id="pl-custom" placeholder="e.g. estoy enfermo / need groceries / no tengo hambre de hacerlo"></label>
+      <p class="muted" style="font-size:.72rem;margin-top:6px">We'll auto-sort into the closest category — food, sick, tired, etc. work across languages.</p>`,
       [
         { label: "Cancel" },
         { label: "Log it", cls: "primary", onClick: m => {
+          const custom = m.querySelector("#pl-custom").value.trim();
           const sel = m.querySelector('input[name="pl"]:checked');
-          if (!sel) return false;
-          const reason = REASONS[+sel.value];
+          let reason;
+          if (custom) reason = Categorize.categorizeAvoidance(custom);
+          else if (sel) reason = REASONS[+sel.value];
+          else return false;
           Store.s.procrastinationLog.push({ ts: Date.now(), taskId: task.id, taskTitle: task.title, reason });
           Store.save();
           toast("Logged. Patterns show up in Analytics. 🔍");
           if (reason.includes("Overwhelmed") || reason.includes("Confused") || reason.includes("next step")) {
             setTimeout(() => microSteps(task), 400);
           } else if (reason.includes("Tired")) {
-            toast("Tired? Try the 🚪 Just-5-Minutes timer — tiny commitment, real momentum.", "", 4500);
+            toast("Tired? Try the 🚪 Just-5-Minutes timer — tiny commitment, real momentum.", "", 4500, { key: "tired-tip" });
           }
         }},
       ]);

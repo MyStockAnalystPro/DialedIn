@@ -331,12 +331,8 @@ const Game = (() => {
     { id: "skin_astro", icon: "🧑‍🚀", name: "Astronaut", type: "skin", price: 400 },
     { id: "skin_royal", icon: "🤴", name: "Royalty", type: "skin", price: 600 },
     { id: "skin_robot", icon: "🤖", name: "Automaton", type: "skin", price: 800 },
-    // gear
-    { id: "gear_sword", icon: "🗡️", name: "Focus Blade", type: "gear", price: 120 },
-    { id: "gear_shield", icon: "🛡️", name: "Distraction Shield", type: "gear", price: 120 },
-    { id: "gear_crown", icon: "👑", name: "Crown of Discipline", type: "gear", price: 500 },
-    { id: "gear_lightning", icon: "⚡", name: "Momentum Bolt", type: "gear", price: 300 },
     // pets
+    { id: "pet_dog", icon: "🐕", name: "Loyal Dog", type: "pet", price: 250 },
     { id: "pet_cat", icon: "🐱", name: "Study Cat", type: "pet", price: 200 },
     { id: "pet_dragon", icon: "🐲", name: "Baby Dragon", type: "pet", price: 450 },
     { id: "pet_owl", icon: "🦉", name: "Wise Owl", type: "pet", price: 350 },

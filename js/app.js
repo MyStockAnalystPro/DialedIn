@@ -846,16 +846,14 @@ const App = (() => {
   function renderShop() {
     const v = $("#view-shop");
     const eq = Store.s.equipped;
-    const skin = Game.shopItem(eq.skin), gear = Game.shopItem(eq.gear), pet = Game.shopItem(eq.pet);
-    const sections = [["skin", "🎭 Skins"], ["gear", "🗡️ Gear"], ["pet", "🐾 Pets"], ["reward", "🎁 Real-Life Rewards"], ["upgrade", "🧬 Permanent Upgrades"], ["consumable", "🧪 Consumables"]];
+    const skin = Game.shopItem(eq.skin), pet = Game.shopItem(eq.pet);
+    const sections = [["skin", "🎭 Skins"], ["pet", "🐾 Pets"], ["reward", "🎁 Real-Life Rewards"], ["upgrade", "🧬 Permanent Upgrades"], ["consumable", "🧪 Consumables"]];
 
     v.innerHTML = `
       <div class="avatar-stage">
         <div class="zone-label">Your Avatar</div>
         <div class="avatar-big">
-          ${gear ? `<span class="avatar-gear-l">${gear.icon}</span>` : ""}
           ${skin ? skin.icon : "🙂"}
-          ${gear && gear.id === "gear_crown" ? "" : ""}
           ${pet ? `<span class="avatar-pet-big">${pet.icon}</span>` : ""}
         </div>
         <p style="margin-top:10px"><b>${USER_NAME}</b> · Level ${Game.level().level} ${Store.s.prestige ? `· Prestige ${Store.s.prestige}` : ""}</p>
@@ -952,6 +950,8 @@ const App = (() => {
               ${["none", "rain", "space", "cozy"].map(b => `<option ${s.videoBg === b ? "selected" : ""}>${b}</option>`).join("")}
             </select></label>
           <label class="check"><input type="checkbox" id="set-anim" ${s.animations ? "checked" : ""}> Animations & visual pulses (turn off if distracting)</label>
+          <label class="check" style="margin-top:10px"><input type="checkbox" id="set-shortcuts" ${s.shortcutsEnabled !== false ? "checked" : ""}> ⌨️ Enable keyboard shortcuts (1–9, z, n, space…)</label>
+          <p class="muted" style="font-size:.72rem;margin-top:4px">Ctrl/Cmd+K search always works. Shortcuts never fire while typing in notes, journal, tasks, or brain dump.</p>
           ${Store.s.shopOwned.includes("cos_accent")
             ? `<label class="field"><span>🎨 Custom accent color (unlocked!)</span>
                  <div style="display:flex;gap:8px;align-items:center">
@@ -987,12 +987,17 @@ const App = (() => {
 
     v.querySelectorAll("[data-prof]").forEach(b => b.onclick = () => {
       Store.switchProfile(b.dataset.prof);
-      toast(`Switched to ${b.dataset.prof} profile`);
+      toast(`Switched to ${b.dataset.prof} profile`, "", 2600, { key: "profile-switch" });
       UI.applyTheme(); UI.refreshAll();
       renderSettings();
     });
     $("#set-identity").onclick = Psych.editIdentity;
     $("#set-theme").onchange = e => UI.setThemeMode(e.target.value);
+    $("#set-shortcuts").onchange = e => {
+      s.shortcutsEnabled = e.target.checked;
+      Store.save();
+      toast(s.shortcutsEnabled ? "⌨️ Keyboard shortcuts on" : "⌨️ Keyboard shortcuts off", "", 2200, { key: "shortcuts-toggle" });
+    };
     $("#set-winddown").onchange = e => { s.autoWinddown = e.target.checked; Store.save(); UI.applyTheme(); };
     $("#set-font").onchange = e => { s.font = e.target.value; Store.save(); UI.applyTheme(); };
     $("#set-bg").onchange = e => { s.videoBg = e.target.value; Store.save(); UI.applyTheme(); };
@@ -1052,12 +1057,12 @@ const App = (() => {
       Store.s.settings.sound = !Store.s.settings.sound;
       Store.save();
       document.getElementById("sound-toggle").classList.toggle("muted-icon", !Store.s.settings.sound);
-      toast(Store.s.settings.sound ? "Sound on" : "Sound off");
+      toast(Store.s.settings.sound ? "Sound on" : "Sound off", "", 2600, { key: "sound-toggle" });
     };
     document.getElementById("sound-toggle").classList.toggle("muted-icon", !Store.s.settings.sound);
     document.getElementById("theme-cycle").onclick = () => {
       UI.setThemeMode(Store.s.settings.themeMode === "minimal" ? "dark" : "minimal");
-      toast("Theme: " + (Store.s.settings.themeMode === "minimal" ? "☁️ Minimal" : "🌌 Dark"));
+      toast("Theme: " + (Store.s.settings.themeMode === "minimal" ? "☁️ Minimal" : "🌌 Dark"), "", 2600, { key: "theme-cycle" });
     };
     document.getElementById("identity-banner").onclick = Psych.editIdentity;
 

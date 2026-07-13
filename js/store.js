@@ -101,6 +101,7 @@ const Store = (() => {
       autoClean: true,
       autoReschedule: true,
       sidebarCollapsed: false,
+      shortcutsEnabled: true,
       eisenTitles: {
         q1: "Urgent & Important — Do Now",
         q2: "Important, Not Urgent — Schedule",
@@ -128,6 +129,8 @@ const Store = (() => {
     } catch (e) { state = defaultState(); }
     state.profile = profile;
     state.sessionStart = Date.now();
+    if (!state.settings || typeof state.settings !== "object") state.settings = defaultState().settings;
+    state.settings = Object.assign(defaultState().settings, state.settings);
   }
 
   let saveTimer = null;

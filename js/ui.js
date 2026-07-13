@@ -59,12 +59,27 @@ const UI = (() => {
     });
   }
 
-  /* ---------- Toasts ---------- */
-  function toast(msg, kind = "", ms = 2600) {
-    const t = el("div", `toast ${kind}`, msg);
-    $("#toasts").appendChild(t);
-    setTimeout(() => t.classList.add("out"), ms);
-    setTimeout(() => t.remove(), ms + 450);
+  /* ---------- Toasts (deduped — spamming the same action replaces one toast) ---------- */
+  const toastSlots = new Map();
+  function toast(msg, kind = "", ms = 2600, opts = {}) {
+    const key = opts.key || msg;
+    let slot = toastSlots.get(key);
+    if (slot) {
+      clearTimeout(slot.hideTimer);
+      clearTimeout(slot.removeTimer);
+      slot.el.textContent = msg;
+      slot.el.className = `toast ${kind}`;
+      slot.el.classList.remove("out");
+    } else {
+      slot = { el: el("div", `toast ${kind}`, msg) };
+      $("#toasts").appendChild(slot.el);
+      toastSlots.set(key, slot);
+    }
+    slot.hideTimer = setTimeout(() => slot.el.classList.add("out"), ms);
+    slot.removeTimer = setTimeout(() => {
+      slot.el.remove();
+      toastSlots.delete(key);
+    }, ms + 450);
   }
 
   /* ---------- Modal ---------- */
@@ -169,7 +184,10 @@ const UI = (() => {
   let bgRAF = null, bgParts = [];
   function drawBackground() {
     cancelAnimationFrame(bgRAF);
-    const cv = $("#bg-canvas"), ctx = cv.getContext("2d");
+    const cv = $("#bg-canvas");
+    if (!cv) return;
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
     cv.width = innerWidth; cv.height = innerHeight;
     ctx.clearRect(0, 0, cv.width, cv.height);
     const kind = Store.s.settings.videoBg;
@@ -276,10 +294,10 @@ const UI = (() => {
     $("#chip-multiplier").innerHTML = `${chipIco("zap")} ×${Game.multiplier().toFixed(1)}`;
     // sidebar mini profile
     const eq = Store.s.equipped;
-    const skin = Game.shopItem(eq.skin), gear = Game.shopItem(eq.gear), pet = Game.shopItem(eq.pet);
+    const skin = Game.shopItem(eq.skin), pet = Game.shopItem(eq.pet);
     $("#side-profile").innerHTML = `
       <div class="avatar-mini">${skin ? skin.icon : "🙂"}${pet ? `<span class="avatar-pet">${pet.icon}</span>` : ""}</div>
-      <div><b>${USER_NAME}</b>${gear ? " " + gear.icon : ""}<br><span class="muted">Lv ${lvl.level} · ${chipIco("flame")}${Store.s.streak}</span></div>`;
+      <div><b>${USER_NAME}</b><br><span class="muted">Lv ${lvl.level} · ${chipIco("flame")}${Store.s.streak}</span></div>`;
   }
 
   function refreshAll() {
@@ -335,7 +353,7 @@ const UI = (() => {
     const on = typeof force === "boolean" ? force : !isMinimalMode();
     document.body.classList.toggle("minimal-zen", on);
     $("#zen-btn")?.classList.toggle("active", on);
-    toast(on ? "Minimal Mode — just your timer, tasks, notes & analytics. Press z to exit." : "Minimal Mode off — welcome back.", "", 3200);
+    toast(on ? "Minimal Mode — just your timer, tasks, notes & analytics. Press z to exit." : "Minimal Mode off — welcome back.", "", 3200, { key: "minimal-mode" });
     if (renderers[currentView]) renderers[currentView]();
   }
   function updateZen() {
@@ -473,12 +491,22 @@ const UI = (() => {
 
   /* ---------- Keyboard shortcuts ---------- */
   const viewKeys = { "1": "dashboard", "2": "tasks", "3": "timebox", "4": "quests", "5": "skills", "6": "shop", "7": "notes", "8": "analytics", "9": "wellness" };
+  function isTypingContext() {
+    const ae = document.activeElement;
+    if (!ae) return false;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName)) return true;
+    if (ae.isContentEditable) return true;
+    if (!$("#quick-bar")?.classList.contains("hidden")) return true;
+    if (!$("#scratchpad")?.classList.contains("hidden") && ae === $("#scratch-text")) return true;
+    if ($("#modal-root")?.children.length) return true;
+    return false;
+  }
   function initShortcuts() {
     document.addEventListener("keydown", e => {
-      const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandPalette(); return; }
       if (e.key === "Escape") { if ($("#cmd-palette-back")) closeCommandPalette(); else if (tour.active) closeTour(); else exitZen(); return; }
-      if (inField) return;
+      if (Store.s.settings.shortcutsEnabled === false) return;
+      if (isTypingContext()) return;
       if (viewKeys[e.key]) { showView(viewKeys[e.key]); }
       else if (e.key === "z") { toggleMinimalMode(); }
       else if (e.key === "b") { toggleSidebar(); }
@@ -491,7 +519,8 @@ const UI = (() => {
   }
   function showShortcutHelp() {
     modal("⌨️ Keyboard Shortcuts", `
-      <div class="stat-line"><span>Ctrl/Cmd + K</span><b>Search everything</b></div>
+      <div class="stat-line"><span>Ctrl/Cmd + K</span><b>Search anything (always on)</b></div>
+      <div class="stat-line"><span>Settings</span><b>Toggle shortcuts on/off</b></div>
       <div class="stat-line"><span>1–9</span><b>Switch views</b></div>
       <div class="stat-line"><span>Space</span><b>Start / pause timer</b></div>
       <div class="stat-line"><span>z</span><b>Minimal Mode (strips app to timer + tasks + analytics)</b></div>
@@ -505,11 +534,92 @@ const UI = (() => {
       [{ label: "Close", cls: "primary" }]);
   }
 
-  /* ---------- Global Command Palette (Ctrl/Cmd+K) ----------
-     A single "search everything" surface: jump to any view, open any note (title or body
-     match — which also covers canvas names + notecard content, since canvas mirror notes
-     hold that text), or run a handful of quick actions. Deliberately lightweight (substring
-     match, no fuzzy scoring lib) to stay snappy on a plain-JS stack. */
+  /* ---------- Global Command Palette (Ctrl/Cmd+K) — site-wide search + jump + highlight ---------- */
+  const SEARCH_SYNONYMS = {
+    pulse: ["timer", "pomodoro", "stopwatch", "focus session", "the pulse"],
+    focus: ["deep work", "concentration", "focus time"],
+    zen: ["minimal mode", "minimal", "distraction free"],
+    streak: ["days", "flame", "multiplier"],
+    boss: ["boss battle", "project", "hp"],
+    mood: ["feelings", "emotion", "wellness mood"],
+    water: ["hydration", "drink", "cups"],
+    journal: ["diary", "gratitude", "reflection"],
+    brain: ["brain dump", "inbox", "vent"],
+    heatmap: ["calendar heat", "focus heatmap"],
+    energy: ["peak hour", "energy tracker", "hour of day"],
+    distribution: ["pie chart", "skill split", "focus distribution"],
+    ratio: ["focus-to-distraction", "distraction ratio"],
+    shop: ["avatar", "coins", "skins", "pets"],
+    quest: ["daily quest", "badges"],
+    timebox: ["schedule", "calendar grid", "time block"],
+    settings: ["theme", "appearance", "profile", "sound"],
+    automation: ["rules", "ifttt", "templates"],
+    analytics: ["stats", "report", "data", "insights"],
+    dashboard: ["home", "now zone", "progress"],
+  };
+
+  function expandQuery(q) {
+    const parts = new Set([q]);
+    Object.entries(SEARCH_SYNONYMS).forEach(([key, vals]) => {
+      if (q.includes(key) || vals.some(v => q.includes(v))) {
+        parts.add(key);
+        vals.forEach(v => parts.add(v));
+      }
+    });
+    return [...parts].join(" ");
+  }
+
+  function highlightElement(node, ms = 2600) {
+    if (!node) return;
+    node.classList.add("search-flash");
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => node.classList.remove("search-flash"), ms);
+  }
+
+  function findTextTarget(container, needle) {
+    if (!container || !needle) return null;
+    const n = needle.toLowerCase();
+    const escAttr = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(needle) : needle.replace(/"/g, '\\"');
+    const marked = container.querySelector(`[data-search="${escAttr}"]`);
+    if (marked) return marked;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node, best = null;
+    while (node = walker.nextNode()) {
+      if (!node.textContent.trim() || !node.textContent.toLowerCase().includes(n)) continue;
+      let el = node.parentElement;
+      while (el && el !== container) {
+        if (el.matches && el.matches(".card, .stat-line, .zone-label, .zone-now, .pulse-card, .progress-card, .ritual-card, .quest-item, .shop-item, .skill-row, .boss-card, .nav-item, h2, h3, label.field, .mode-btn, .note-tile, .task-col, .breath-stage, .water-row, .mood-row")) {
+          best = el;
+          break;
+        }
+        el = el.parentElement;
+      }
+      if (best) break;
+      best = node.parentElement;
+      break;
+    }
+    return best;
+  }
+
+  function navigateAndHighlight(viewName, findText, query) {
+    showView(viewName);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const container = $("#view-" + viewName);
+        const target = findTextTarget(container, findText || query);
+        highlightElement(target);
+      }, 100);
+    });
+  }
+
+  function siteEntry(title, sub, icon, view, findText, keywords = []) {
+    const blob = [title, findText, ...keywords].filter(Boolean).join(" ").toLowerCase();
+    return {
+      title, sub, icon, body: blob,
+      run: () => navigateAndHighlight(view, findText || title, title.toLowerCase()),
+    };
+  }
+
   function buildPaletteCommands() {
     const cmds = [];
     $$(".nav-item[data-view]").forEach(btn => {
@@ -517,29 +627,87 @@ const UI = (() => {
       clone.querySelectorAll("kbd,.ico").forEach(n => n.remove());
       cmds.push({
         title: clone.textContent.trim(), sub: "View", icon: btn.querySelector(".ico")?.dataset.ico || "file",
+        body: clone.textContent.trim().toLowerCase(),
         run: () => showView(btn.dataset.view),
       });
     });
+
     cmds.push(
-      { title: "Search everything…", sub: "you're already here", icon: "search", run: () => {} },
-      { title: "Toggle Minimal (Zen) Mode", sub: "Action · z", icon: "moon", run: () => toggleMinimalMode() },
-      { title: "Enter Focus Session", sub: "Action", icon: "clock", run: () => enterZen() },
-      { title: "Quick-add a task", sub: "Action · n", icon: "plus", run: () => toggleQuickBar(true) },
-      { title: "Toggle sidebar", sub: "Action · b", icon: "bars", run: () => toggleSidebar() },
-      { title: "Start guided tour", sub: "Action · g", icon: "compass", run: () => startTour() },
-      { title: "Keyboard shortcuts", sub: "Action · ?", icon: "keyboard", run: () => showShortcutHelp() },
-      { title: "Cycle theme", sub: "Action", icon: "palette", run: () => $("#theme-cycle")?.click() },
+      siteEntry("The Pulse", "Dashboard · Timer", "clock", "dashboard", "The Pulse", ["pulse", "timer", "pomodoro"]),
+      siteEntry("The Now Zone", "Dashboard · Active task", "target", "dashboard", "The Now Zone", ["now zone", "current task"]),
+      siteEntry("The Progress", "Dashboard · Level & quests", "star", "dashboard", "The Progress", ["progress", "level", "xp", "streak"]),
+      siteEntry("Daily Ritual", "Dashboard · Run your day", "compass", "dashboard", "Daily Ritual", ["ritual", "run this day"]),
+      siteEntry("Focus-to-distraction ratio", "Analytics · Core Stats", "bars", "analytics", "Focus-to-distraction ratio", ["focus ratio", "distraction"]),
+      siteEntry("Focus Distribution", "Analytics · Pie chart", "bars", "analytics", "Focus Distribution", ["distribution", "pie", "skills split"]),
+      siteEntry("Energy Tracker", "Analytics · Peak hours", "activity", "analytics", "Energy Tracker", ["energy", "peak hour"]),
+      siteEntry("Focus Heatmap", "Analytics · 26 weeks", "calendar", "analytics", "Focus Heatmap", ["heatmap"]),
+      siteEntry("Streak Calendar", "Analytics · 28 days", "calendar", "analytics", "Streak Calendar", ["streak calendar"]),
+      siteEntry("Weekly Report Card", "Analytics · Download", "file", "analytics", "Weekly Report Card", ["report"]),
+      siteEntry("Predictive Analytics", "Analytics · ETA", "target", "analytics", "Predictive Analytics", ["predictions"]),
+      siteEntry("Kanban board", "Tasks · Board view", "check", "tasks", "Kanban", ["board", "todo", "doing", "done"]),
+      siteEntry("Smart lists", "Tasks · List view", "bars", "tasks", "Smart lists", ["today", "next 7 days"]),
+      siteEntry("Eisenhower matrix", "Tasks · Priority grid", "target", "tasks", "Eisenhower", ["urgent", "important"]),
+      siteEntry("Timebox grid", "Timebox · Day schedule", "calendar", "timebox", "Timebox", ["timebox", "schedule"]),
+      siteEntry("Brain Dump Inbox", "Mind · Vent & convert", "wind", "braindump", "Brain Dump", ["brain dump", "inbox"]),
+      siteEntry("Journal", "Mind · Daily prompt", "book", "journal", "Journal", ["gratitude", "diary"]),
+      siteEntry("Daily quests", "Quests · Today", "target", "quests", "Daily Quests", ["quests"]),
+      siteEntry("Badges", "Quests · Achievements", "star", "quests", "Badges", ["badges", "achievements"]),
+      siteEntry("Boss Battles", "Skills · Projects", "activity", "skills", "Boss", ["boss battles"]),
+      siteEntry("Skill trees", "Skills · XP tracks", "activity", "skills", "Skills", ["skill tree"]),
+      siteEntry("Shop & Avatar", "Progression · Cosmetics", "bag", "shop", "Your Avatar", ["shop", "avatar", "skins", "pets"]),
+      siteEntry("Hydration tracker", "Wellness · Water", "droplet", "wellness", "Hydration", ["water", "hydration"]),
+      siteEntry("Mood check-in", "Wellness · Log mood", "heart", "wellness", "Mood", ["mood", "feelings"]),
+      siteEntry("Breathing exercise", "Wellness · Calm", "wind", "wellness", "Breathing", ["breath", "calm"]),
+      siteEntry("IFTTT rules", "Automation · Triggers", "zap", "automation", "IFTTT", ["rules", "automation"]),
+      siteEntry("Theme & appearance", "Settings · Look & feel", "palette", "settings", "Appearance", ["theme", "dark", "minimal", "font"]),
+      siteEntry("Keyboard shortcuts", "Settings · Hotkeys", "keyboard", "settings", "Keyboard", ["shortcuts", "hotkeys"]),
+      siteEntry("Context profiles", "Settings · School / Life", "settings", "settings", "Context Profiles", ["profile", "school", "hobbies"]),
+      { title: "Toggle Minimal (Zen) Mode", sub: "Action · z", icon: "moon", body: "minimal zen mode toggle", run: () => toggleMinimalMode() },
+      { title: "Enter Focus Session", sub: "Action", icon: "clock", body: "focus session fullscreen zen overlay", run: () => enterZen() },
+      { title: "Quick-add a task", sub: "Action · n", icon: "plus", body: "quick add task create", run: () => toggleQuickBar(true) },
+      { title: "Toggle sidebar", sub: "Action · b", icon: "bars", body: "sidebar collapse", run: () => toggleSidebar() },
+      { title: "Start guided tour", sub: "Action · g", icon: "compass", body: "tour guide onboarding", run: () => startTour() },
+      { title: "Show keyboard shortcuts", sub: "Action · ?", icon: "keyboard", body: "shortcuts help", run: () => showShortcutHelp() },
+      { title: "Cycle theme", sub: "Action", icon: "palette", body: "theme dark minimal switch", run: () => $("#theme-cycle")?.click() },
     );
+
+    (Store.s.tasks || []).forEach(t => {
+      if (t.status === "done") return;
+      cmds.push({
+        title: t.title, sub: "Task · " + t.status, icon: "check",
+        body: [t.title, ...(t.tags || []), t.priority].join(" ").toLowerCase(),
+        run: () => { showView("tasks"); setTimeout(() => highlightElement(findTextTarget($("#view-tasks"), t.title)), 120); },
+      });
+    });
+
     (Store.s.notes || []).forEach(n => {
       const isCanvas = (Store.s.canvases || []).some(c => c.noteId === n.id);
       cmds.push({
         title: n.title || "Untitled", sub: isCanvas ? "Canvas" : "Note", icon: isCanvas ? "cube" : "file",
-        body: n.body || "",
+        body: [n.title, n.body || ""].join(" ").toLowerCase(),
         run: () => { showView("notes"); Notes.openNoteModal(n.id); },
       });
     });
+
+    Object.entries(Store.s.journal || {}).forEach(([date, j]) => {
+      if (!j.entry && !j.gratitude) return;
+      cmds.push({
+        title: `Journal · ${date}`, sub: "Journal entry", icon: "book",
+        body: [date, j.prompt, j.entry, j.gratitude].join(" ").toLowerCase(),
+        run: () => { showView("journal"); setTimeout(() => highlightElement(findTextTarget($("#view-journal"), date)), 120); },
+      });
+    });
+
     return cmds;
   }
+
+  function markMatch(text, q) {
+    if (!q) return esc(text);
+    const idx = text.toLowerCase().indexOf(q);
+    if (idx < 0) return esc(text);
+    return esc(text.slice(0, idx)) + `<mark class="cmd-mark">${esc(text.slice(idx, idx + q.length))}</mark>` + esc(text.slice(idx + q.length));
+  }
+
   function closeCommandPalette() { $("#cmd-palette-back")?.remove(); }
   function openCommandPalette() {
     if ($("#cmd-palette-back")) { $("#cmd-palette-input")?.focus(); return; }
@@ -549,49 +717,71 @@ const UI = (() => {
       <div class="cmd-palette-box">
         <div class="cmd-palette-input-row">
           <i class="ico" data-ico="search"></i>
-          <input type="text" id="cmd-palette-input" placeholder="Search views, notes, canvases &amp; actions…" autocomplete="off">
-          <kbd>Esc</kbd>
+          <input type="text" id="cmd-palette-input" placeholder="Search anything on the site…" autocomplete="off" spellcheck="false">
+          <kbd>esc</kbd>
         </div>
         <div class="cmd-palette-results" id="cmd-palette-results"></div>
+        <div class="cmd-palette-foot">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> go &amp; highlight</span>
+        </div>
       </div>`;
     document.body.appendChild(back);
     mountIcons(back);
     back.onclick = e => { if (e.target === back) closeCommandPalette(); };
     requestAnimationFrame(() => back.classList.add("open"));
 
-    const commands = buildPaletteCommands();
+    const commands = (() => { try { return buildPaletteCommands(); } catch (e) { console.error("Search index error:", e); return []; } })();
     const input = $("#cmd-palette-input");
     const resultsEl = $("#cmd-palette-results");
     let active = 0, shown = [];
 
-    function score(cmd, q) {
-      const t = cmd.title.toLowerCase();
-      if (t === q) return 100;
-      if (t.startsWith(q)) return 80;
-      const ti = t.indexOf(q);
-      if (ti >= 0) return 60 - ti;
-      if ((cmd.body || "").toLowerCase().includes(q)) return 20;
-      return -1;
+    function score(cmd, qRaw) {
+      const q = expandQuery(qRaw);
+      const tokens = q.split(/\s+/).filter(Boolean);
+      if (!tokens.length) return 1;
+      const title = cmd.title.toLowerCase();
+      const body = (cmd.body || "").toLowerCase();
+      let s = -1;
+      tokens.forEach(t => {
+        if (title === t) s = Math.max(s, 100);
+        else if (title.startsWith(t)) s = Math.max(s, 85);
+        else {
+          const ti = title.indexOf(t);
+          if (ti >= 0) s = Math.max(s, 70 - ti);
+        }
+        if (body.includes(t)) s = Math.max(s, 35);
+        if ((cmd.sub || "").toLowerCase().includes(t)) s = Math.max(s, 45);
+      });
+      return s;
+    }
+    function setActive(i) {
+      active = i;
+      resultsEl.querySelectorAll(".cmd-palette-item").forEach((row, j) => {
+        row.classList.toggle("active", j === active);
+      });
+      resultsEl.querySelector(".cmd-palette-item.active")?.scrollIntoView({ block: "nearest" });
     }
     function draw() {
       const q = input.value.trim().toLowerCase();
       shown = q
-        ? commands.map(c => ({ c, s: score(c, q) })).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).map(x => x.c).slice(0, 40)
-        : commands.slice(0, 40);
+        ? commands.map(c => ({ c, s: score(c, q) })).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).map(x => x.c).slice(0, 50)
+        : commands.slice(0, 50);
       active = Math.min(active, Math.max(0, shown.length - 1));
       resultsEl.innerHTML = shown.length ? "" : `<div class="cmd-palette-empty">No matches for "${esc(input.value)}"</div>`;
       shown.forEach((c, i) => {
         const row = el("div", `cmd-palette-item ${i === active ? "active" : ""}`);
-        row.innerHTML = `<i class="ico" data-ico="${c.icon}"></i><span class="cmd-title">${esc(c.title)}</span><span class="cmd-sub muted2">${esc(c.sub)}</span>`;
-        row.onmouseenter = () => { active = i; draw(); };
+        row.innerHTML = `<i class="ico" data-ico="${c.icon}"></i><span class="cmd-title">${markMatch(c.title, q)}</span><span class="cmd-sub muted2">${esc(c.sub)}</span>`;
+        // IMPORTANT: do not call draw() on mouseenter — that caused an infinite re-render loop
+        row.onmouseenter = () => { if (active !== i) setActive(i); };
         row.onclick = () => { closeCommandPalette(); c.run(); };
         resultsEl.appendChild(row);
       });
       mountIcons(resultsEl);
     }
     input.onkeydown = e => {
-      if (e.key === "ArrowDown") { e.preventDefault(); active = Math.min(shown.length - 1, active + 1); draw(); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); active = Math.max(0, active - 1); draw(); }
+      if (e.key === "ArrowDown") { e.preventDefault(); setActive(Math.min(shown.length - 1, active + 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(0, active - 1)); }
       else if (e.key === "Enter") { e.preventDefault(); const c = shown[active]; if (c) { closeCommandPalette(); c.run(); } }
     };
     input.oninput = () => { active = 0; draw(); };

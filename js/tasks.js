@@ -111,6 +111,7 @@ const Tasks = (() => {
       if (sk) props.skill = sk.id;
     });
     props.title = title.replace(/\s+/g, " ").trim() || "Untitled";
+    if (typeof Categorize !== "undefined") Categorize.applyToQuickAddProps(props, raw);
     return props;
   }
 
