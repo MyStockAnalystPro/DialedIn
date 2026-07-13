@@ -59,9 +59,68 @@ const Notes = (() => {
     return JOURNAL_PROMPTS[seed % JOURNAL_PROMPTS.length];
   }
 
+  const NOTE_COLORS = [
+    { id: "gray", hex: "#8a8f98" }, { id: "red", hex: "#e5484d" }, { id: "orange", hex: "#f5a524" },
+    { id: "yellow", hex: "#e8c547" }, { id: "green", hex: "#46a758" }, { id: "blue", hex: "#5e6ad2" },
+    { id: "purple", hex: "#8e6ff0" },
+  ];
+
+  const NOTE_FONTS = [
+    { id: "", label: "Default", family: "" },
+    { id: "serif", label: "Serif", family: "Georgia, 'Times New Roman', serif" },
+    { id: "mono", label: "Monospace", family: "'JetBrains Mono', Consolas, monospace" },
+    { id: "cursive", label: "Cursive", family: "'Brush Script MT', cursive" },
+    { id: "classic", label: "Classic", family: "'Times New Roman', Times, serif" },
+  ];
+
+  function rgbToHex(rgb) {
+    if (!rgb) return null;
+    if (rgb.startsWith("#")) return rgb.toLowerCase();
+    const m = rgb.match(/\d+/g);
+    if (!m) return null;
+    return "#" + m.slice(0, 3).map(x => (+x).toString(16).padStart(2, "0")).join("");
+  }
+
+  // Converts bare shorthand (red:Food, font:Cursive|text) into canonical {{…}} tokens before render.
+  function normalizeMarkupSource(src) {
+    if (!src) return "";
+    let s = src;
+    NOTE_COLORS.forEach(c => {
+      const re = new RegExp(`(^|[\\s|(])(${c.id}):([^\\s\\{\\}\\n|][^\\n\\{\\}|]*)`, "gi");
+      s = s.replace(re, (m, pre, id, text) => `${pre}{{${c.id}:${text.trim()}}}`);
+    });
+    s = s.replace(/(?:^|\s|\|)font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{{")) return m;
+      return ` {{font:${font.trim()}|${trimmed}}}`;
+    });
+    return s.trim();
+  }
+
+  // Iteratively resolves nested {{color:…}} / {{font:…|…}} innermost-first.
+  function renderStyledTokens(html) {
+    let out = html, prev = "";
+    while (out !== prev) {
+      prev = out;
+      out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
+        const c = NOTE_COLORS.find(cc => cc.id === colorId);
+        return c ? `<span style="color:${c.hex}">${text}</span>` : text;
+      });
+      out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
+        `<span style="font-family:${font}">${text}</span>`);
+    }
+    return out;
+  }
+
+  function bodyForRender(n) {
+    let body = normalizeMarkupSource(n?.body || "");
+    if (n?.font && body && !body.includes("{{font:")) body = `{{font:${n.font}|${body}}}`;
+    return body;
+  }
+
   /* ---------- Markdown renderer (with wiki links, toggles, bookmarks) ---------- */
   function renderMarkdown(src) {
-    let out = esc(src);
+    let out = esc(normalizeMarkupSource(src || ""));
 
     // fenced code blocks first
     out = out.replace(/```(\w*)\n([\s\S]*?)```/g, (m, lang, code) =>
@@ -98,21 +157,7 @@ const Notes = (() => {
     out = out.replace(/^- \[ \] (.*)$/gm, '<div>⬜ $1</div>');
     out = out.replace(/^(\s*)- (.*)$/gm, "$1<li>$2</li>");
     out = out.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
-    // colored text: {{colorid:text}} — resolved first (innermost) so a wrapping {{font:...}}
-    // below can see already-converted HTML instead of nested braces. The negative lookahead
-    // stops "font" from being misread as a color id when {{font:...}} runs through here.
-    out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
-      const c = NOTE_COLORS.find(cc => cc.id === colorId);
-      return c ? `<span style="color:${c.hex}">${text}</span>` : text;
-    });
-    // Shorthand colored text: purple:Food → Food in purple (never show the prefix)
-    NOTE_COLORS.forEach(c => {
-      const re = new RegExp(`(^|[\\s>])(${c.id}):([^\\n<]+)`, "gi");
-      out = out.replace(re, (m, pre, _id, text) => `${pre}<span style="color:${c.hex}">${text.trim()}</span>`);
-    });
-    // custom font: {{font:Family Name|text}}
-    out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
-      `<span style="font-family:${font}">${text}</span>`);
+    out = renderStyledTokens(out);
     // bold / italic / underline / inline code
     out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
@@ -418,7 +463,7 @@ const Notes = (() => {
       autoGrow();
     };
     ed.onblur = () => {
-      n.body = serializeEditor(ed);
+      n.body = normalizeMarkupSource(serializeEditor(ed));
       const createdNew = syncWikiLinks(n);
       onNoteDataChange(n);
       if (bodyAtFocus !== null && bodyAtFocus !== n.body && bodyAtFocus.trim()) {
@@ -996,7 +1041,13 @@ const Notes = (() => {
           ${NOTE_FONTS.map(f => `<button class="canvas-font-swatch" data-font="${esc(f.family)}" style="font-family:${f.family || "inherit"}">Aa</button>`).join("")}
         </div>
         <input type="text" class="canvas-card-title" placeholder="Untitled" value="${esc(n?.title || "")}">
-        <div class="canvas-card-body" contenteditable="true" style="font-family:${n?.font || ""}"></div>
+        <div class="canvas-card-fmt">
+          <button type="button" class="canvas-fmt-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button type="button" class="canvas-fmt-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button type="button" class="canvas-fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+          ${NOTE_COLORS.map(c => `<button type="button" class="canvas-fmt-color" data-color="${c.id}" style="background:${c.hex}" title="Text ${c.id}"></button>`).join("")}
+        </div>
+        <div class="canvas-card-body" contenteditable="true"></div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
 
@@ -1012,16 +1063,19 @@ const Notes = (() => {
 
       const colorPop = d.querySelector(".canvas-color-pop");
       const fontPop = d.querySelector(".canvas-font-pop");
+      const bodyEd = d.querySelector(".canvas-card-body");
       d.querySelector(".card-color-dot").onclick = e => { e.stopPropagation(); fontPop.classList.add("hidden"); colorPop.classList.toggle("hidden"); };
       d.querySelectorAll(".canvas-color-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
-        if (n) { n.color = sw.dataset.color || null; onNoteDataChange(n); }
-        renderCanvasMode(container);
+        colorPop.classList.add("hidden");
+        if (n) { n.color = sw.dataset.color || null; onNoteDataChange(n); renderCanvasMode(container); }
       });
       d.querySelectorAll(".canvas-font-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
-        if (n) { n.font = sw.dataset.font || null; onNoteDataChange(n); }
-        renderCanvasMode(container);
+        fontPop.classList.add("hidden");
+        const font = sw.dataset.font;
+        if (font) applyCanvasCmd(bodyEd, "fontName", font);
+        commitCanvasBody(bodyEd, n);
       });
 
       const titleInput = d.querySelector(".canvas-card-title");
@@ -1029,8 +1083,24 @@ const Notes = (() => {
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
       titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
 
-      const bodyEd = d.querySelector(".canvas-card-body");
       if (n) refreshEditorContent(bodyEd, n);
+      d.querySelectorAll(".canvas-fmt-btn").forEach(b => {
+        b.addEventListener("mousedown", e => e.preventDefault());
+        b.onclick = e => {
+          e.stopPropagation();
+          applyCanvasCmd(bodyEd, b.dataset.cmd);
+          commitCanvasBody(bodyEd, n);
+        };
+      });
+      d.querySelectorAll(".canvas-fmt-color").forEach(sw => {
+        sw.addEventListener("mousedown", e => e.preventDefault());
+        sw.onclick = e => {
+          e.stopPropagation();
+          const c = NOTE_COLORS.find(x => x.id === sw.dataset.color);
+          if (c) applyCanvasCmd(bodyEd, "foreColor", c.hex);
+          commitCanvasBody(bodyEd, n);
+        };
+      });
       bodyEd.oninput = () => {
         if (!n) return;
         n.body = serializeEditor(bodyEd);
@@ -1040,7 +1110,7 @@ const Notes = (() => {
       };
       bodyEd.onblur = () => {
         if (!n) return;
-        n.body = serializeEditor(bodyEd);
+        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
         syncWikiLinks(n);
         refreshEditorContent(bodyEd, n);
         onNoteDataChange(n);
@@ -1182,26 +1252,18 @@ const Notes = (() => {
     }, { passive: false });
   }
 
-  const NOTE_COLORS = [
-    { id: "gray", hex: "#8a8f98" }, { id: "red", hex: "#e5484d" }, { id: "orange", hex: "#f5a524" },
-    { id: "yellow", hex: "#e8c547" }, { id: "green", hex: "#46a758" }, { id: "blue", hex: "#5e6ad2" },
-    { id: "purple", hex: "#8e6ff0" },
-  ];
+  function applyCanvasCmd(bodyEd, cmd, val) {
+    bodyEd.focus();
+    try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+    document.execCommand(cmd, false, val ?? null);
+  }
 
-  const NOTE_FONTS = [
-    { id: "", label: "Default", family: "" },
-    { id: "serif", label: "Serif", family: "Georgia, 'Times New Roman', serif" },
-    { id: "mono", label: "Monospace", family: "'JetBrains Mono', Consolas, monospace" },
-    { id: "cursive", label: "Cursive", family: "'Brush Script MT', cursive" },
-    { id: "classic", label: "Classic", family: "'Times New Roman', Times, serif" },
-  ];
-
-  function rgbToHex(rgb) {
-    if (!rgb) return null;
-    if (rgb.startsWith("#")) return rgb.toLowerCase();
-    const m = rgb.match(/\d+/g);
-    if (!m) return null;
-    return "#" + m.slice(0, 3).map(x => (+x).toString(16).padStart(2, "0")).join("");
+  function commitCanvasBody(bodyEd, n) {
+    if (!n) return;
+    n.body = normalizeMarkupSource(serializeEditor(bodyEd));
+    Store.save();
+    refreshEditorContent(bodyEd, n);
+    onNoteDataChange(n);
   }
 
   // Serializes the rich-text (contenteditable) DOM of the note editor back into our plain-text
@@ -1289,7 +1351,7 @@ const Notes = (() => {
   // after every blur — a full "commit & pretty-print" pass — but never mid-keystroke, so it
   // can't yank the caret out from under an active typing session.
   function refreshEditorContent(ed, n) {
-    ed.innerHTML = renderMarkdown(n.body) || "";
+    ed.innerHTML = renderMarkdown(bodyForRender(n)) || "";
     ed.querySelectorAll(".wikilink").forEach(w => w.onclick = () => {
       const target = findOrCreateByTitle(w.dataset.wiki);
       n.links = n.links || []; target.links = target.links || [];
