@@ -105,6 +105,11 @@ const Notes = (() => {
       const c = NOTE_COLORS.find(cc => cc.id === colorId);
       return c ? `<span style="color:${c.hex}">${text}</span>` : text;
     });
+    // Shorthand colored text: purple:Food → Food in purple (never show the prefix)
+    NOTE_COLORS.forEach(c => {
+      const re = new RegExp(`(^|[\\s>])(${c.id}):([^\\n<]+)`, "gi");
+      out = out.replace(re, (m, pre, _id, text) => `${pre}<span style="color:${c.hex}">${text.trim()}</span>`);
+    });
     // custom font: {{font:Family Name|text}}
     out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
       `<span style="font-family:${font}">${text}</span>`);
@@ -137,6 +142,98 @@ const Notes = (() => {
   }
 
   let noteSearchQuery = "";
+  let notesCanvasFilter = null;
+
+  function noteById(id) { return Store.s.notes.find(n => n.id === id); }
+
+  function canvasCardNote(card) { return card?.noteId ? noteById(card.noteId) : null; }
+
+  function canvasDisplayLabel(cv) {
+    const titles = (cv.cards || []).map(c => (canvasCardNote(c)?.title || c.title || "").trim()).filter(Boolean);
+    if (!titles.length) return "Empty canvas";
+    if (titles.length <= 2) return titles.join(" · ");
+    return titles.slice(0, 2).join(" · ") + ` +${titles.length - 2}`;
+  }
+
+  function ensureNotesCanvasFilter() {
+    ensureCanvases();
+    if (!notesCanvasFilter || !Store.s.canvases.some(c => c.id === notesCanvasFilter))
+      notesCanvasFilter = Store.s.canvases[0]?.id || null;
+  }
+
+  function syncCanvasConnectionsToGraph() {
+    Store.s.canvases.forEach(cv => {
+      (cv.connections || []).forEach(conn => {
+        const ca = cv.cards.find(c => c.id === conn.from);
+        const cb = cv.cards.find(c => c.id === conn.to);
+        if (!ca?.noteId || !cb?.noteId) return;
+        const a = noteById(ca.noteId), b = noteById(cb.noteId);
+        if (!a || !b) return;
+        a.links = a.links || [];
+        b.links = b.links || [];
+        if (!a.links.includes(b.id)) a.links.push(b.id);
+        if (!b.links.includes(a.id)) b.links.push(a.id);
+      });
+    });
+  }
+
+  let notesRefreshTimer = null;
+  function scheduleNotesRefresh() {
+    clearTimeout(notesRefreshTimer);
+    notesRefreshTimer = setTimeout(refreshNotesViews, 120);
+  }
+
+  function refreshNotesViews() {
+    if (!$("#view-notes")?.classList.contains("active")) return;
+    const body = $("#notes-mode-body");
+    if (!body) return;
+    if (notesMode === "list") renderListMode(body);
+    else if (notesMode === "graph") renderGraphMode(body);
+    else if (notesMode === "canvas") updateCanvasTabLabels(body);
+  }
+
+  function updateCanvasTabLabels(container) {
+    container.querySelectorAll(".canvas-tab[data-id]").forEach(tab => {
+      const c = Store.s.canvases.find(x => x.id === tab.dataset.id);
+      const label = tab.querySelector(".canvas-tab-label");
+      if (c && label) {
+        label.textContent = canvasDisplayLabel(c);
+        tab.title = canvasDisplayLabel(c);
+      }
+    });
+  }
+
+  function onNoteDataChange(n) {
+    if (n) syncWikiLinks(n);
+    syncCanvasConnectionsToGraph();
+    Store.s.canvases.forEach(cv => { cv.name = canvasDisplayLabel(cv); });
+    Store.save();
+    scheduleNotesRefresh();
+  }
+
+  function attachNoteToCanvas(n, cvId) {
+    const cv = Store.s.canvases.find(c => c.id === cvId);
+    if (!cv || cv.cards.some(c => c.noteId === n.id)) return;
+    cv.cards.push({
+      id: "cc" + Date.now() + Math.floor(Math.random() * 1000),
+      noteId: n.id, x: 40 + (cv.cards.length % 4) * 240, y: 40 + Math.floor(cv.cards.length / 4) * 170,
+      w: 220, h: 150,
+    });
+  }
+
+  function detachNoteFromCanvases(noteId) {
+    Store.s.canvases.forEach(cv => {
+      const dead = cv.cards.filter(c => c.noteId === noteId).map(c => c.id);
+      cv.cards = cv.cards.filter(c => c.noteId !== noteId);
+      cv.connections = (cv.connections || []).filter(c => !dead.includes(c.from) && !dead.includes(c.to));
+      cv.name = canvasDisplayLabel(cv);
+    });
+  }
+
+  function notePreviewHtml(body) {
+    if (!body || !body.trim()) return "";
+    return renderMarkdown(body);
+  }
 
   function noteMatchesSearch(n, q) {
     if (!q) return true;
@@ -148,28 +245,26 @@ const Notes = (() => {
   // Clicking a tile opens the full editor in a centered, blurred-backdrop popup (openNoteModal)
   // instead of a permanent side pane, so the grid itself stays airy and scannable.
   function renderListMode(v) {
+    ensureNotesCanvasFilter();
     v.innerHTML = `
       <div class="notes-grid-toolbar">
         <div class="notes-search-wrap">
           <i class="ico" data-ico="search"></i>
-          <input type="text" id="notes-search" placeholder="Search notes, canvases &amp; notecard content…" value="${esc(noteSearchQuery)}">
+          <input type="text" id="notes-search" placeholder="Search notes in this canvas…" value="${esc(noteSearchQuery)}">
         </div>
-        <select id="note-template" title="From template">
-          <option value="">＋ From template…</option>
-          ${Object.keys(TEMPLATES).map(t => `<option>${t}</option>`).join("")}
+        <select id="note-canvas-filter" title="Canvas">
+          ${Store.s.canvases.map(c => `<option value="${c.id}" ${c.id === notesCanvasFilter ? "selected" : ""}>${esc(canvasDisplayLabel(c))}</option>`).join("")}
         </select>
-        <button class="btn-plus" id="note-new" title="New note"><i class="ico" data-ico="plus"></i></button>
+        <button class="btn-plus" id="note-new" title="New note on this canvas"><i class="ico" data-ico="plus"></i></button>
       </div>
       <div class="notes-tile-grid" id="notes-tile-grid"></div>`;
     UI.mountIcons(v);
 
     const grid = $("#notes-tile-grid");
     const q = noteSearchQuery.trim();
-    const notes = Store.s.notes.filter(n => noteMatchesSearch(n, q));
-    if (!Store.s.notes.length) {
-      grid.innerHTML = `<div class="notes-empty-hint">No notes yet. Hit ＋ above or pick a template to start writing.</div>`;
-    } else if (!notes.length) {
-      grid.innerHTML = `<div class="notes-empty-hint">No notes match "${esc(q)}".</div>`;
+    const notes = Store.s.notes.filter(n => n.canvasId === notesCanvasFilter && noteMatchesSearch(n, q));
+    if (!notes.length) {
+      grid.innerHTML = `<div class="notes-empty-hint">${q ? `No notes match "${esc(q)}" on this canvas.` : "No notecards on this canvas yet — hit ＋ or switch to Canvas to add one."}</div>`;
     } else {
       notes.forEach(n => grid.appendChild(noteTileEl(n)));
     }
@@ -182,19 +277,20 @@ const Notes = (() => {
       const fresh = $("#notes-search");
       fresh.focus(); fresh.setSelectionRange(caret, caret);
     };
-    $("#note-new").onclick = () => { const n = createNoteQuiet("Untitled", ""); render(); openNoteModal(n.id); };
-    $("#note-template").onchange = e => {
-      const t = e.target.value;
-      if (!t) return;
-      const n = createNoteQuiet(t + " — " + Store.todayStr(), TEMPLATES[t].replace(/{date}/g, Store.todayStr()));
+    $("#note-canvas-filter").onchange = e => {
+      notesCanvasFilter = e.target.value;
+      renderListMode(v);
+    };
+    $("#note-new").onclick = () => {
+      const n = mintNote("Untitled", "", { canvasId: notesCanvasFilter });
+      attachNoteToCanvas(n, notesCanvasFilter);
+      onNoteDataChange(n);
       render(); openNoteModal(n.id);
     };
   }
 
   function noteTileEl(n) {
     const colorHex = n.color ? (NOTE_COLORS.find(c => c.id === n.color) || {}).hex : null;
-    const isCanvasMirror = Store.s.canvases.some(c => c.noteId === n.id);
-    const snippet = (n.body || "").replace(/[#>*_`\[\]{}]/g, "").replace(/-{3,}/g, " ").replace(/\s+/g, " ").trim().slice(0, 92);
     const tile = el("div", `note-tile ${colorHex ? "tinted" : ""}`);
     if (colorHex) tile.style.setProperty("--tint", colorHex);
     tile.innerHTML = `
@@ -202,12 +298,11 @@ const Notes = (() => {
         <span class="note-tile-title">${esc(n.title || "Untitled")}</span>
         <button class="icon-btn note-tile-del" title="Delete"><i class="ico" data-ico="x"></i></button>
       </div>
-      <div class="note-tile-snip">${snippet ? esc(snippet) + (snippet.length >= 92 ? "…" : "") : '<span class="muted2">Empty note</span>'}</div>
-      ${isCanvasMirror ? `<div class="note-tile-tag"><i class="ico" data-ico="cube"></i> Canvas</div>` : ""}`;
+      <div class="note-tile-snip md-preview">${n.body?.trim() ? notePreviewHtml(n.body) : '<span class="muted2">Empty note</span>'}</div>`;
     UI.mountIcons(tile);
     tile.querySelector(".note-tile-del").onclick = e => {
       e.stopPropagation();
-      if (isCanvasMirror) { toast("This note mirrors a canvas — delete the canvas from the Canvas tab instead.", "bad"); return; }
+      detachNoteFromCanvases(n.id);
       Store.s.notes = Store.s.notes.filter(x => x.id !== n.id);
       if (activeNoteId === n.id) activeNoteId = null;
       if (typeof Undo !== "undefined") Undo.record();
@@ -226,7 +321,9 @@ const Notes = (() => {
     noteModalBack = null;
     back.classList.remove("open");
     setTimeout(() => back.remove(), 160);
-    if ($("#notes-mode-body") && notesMode === "list") renderListMode($("#notes-mode-body"));
+    const body = $("#notes-mode-body");
+    if (body && notesMode === "list") renderListMode(body);
+    else if (body && notesMode === "canvas") renderCanvasMode(body);
   }
 
   function openNoteModal(id) {
@@ -288,10 +385,9 @@ const Notes = (() => {
     const titleInput = wrap.querySelector("#note-title");
     titleInput.oninput = () => {
       n.title = titleInput.value;
-      const cv = Store.s.canvases.find(c => c.noteId === n.id);
-      if (cv) cv.name = titleInput.value;
       Store.save();
       if (typeof Undo !== "undefined") Undo.recordDebounced("note-title-" + n.id);
+      onNoteDataChange(n);
     };
 
     const colorBtn = wrap.querySelector("#note-color-btn");
@@ -317,14 +413,14 @@ const Notes = (() => {
       n.body = serializeEditor(ed);
       Store.save();
       if (typeof Undo !== "undefined") Undo.recordDebounced("note-body-" + n.id);
-      syncWikiLinks(n); // pure data sync (no DOM writes) — safe every keystroke
-      applyNoteBodyToCanvas(n); // if this note mirrors a canvas, reshape its cards live
+      syncWikiLinks(n);
+      onNoteDataChange(n);
       autoGrow();
     };
     ed.onblur = () => {
       n.body = serializeEditor(ed);
       const createdNew = syncWikiLinks(n);
-      applyNoteBodyToCanvas(n);
+      onNoteDataChange(n);
       if (bodyAtFocus !== null && bodyAtFocus !== n.body && bodyAtFocus.trim()) {
         n.history.push({ ts: Date.now(), body: bodyAtFocus });
         if (n.history.length > 25) n.history.shift();
@@ -423,9 +519,7 @@ const Notes = (() => {
   }
 
   function renderGraphMode(container) {
-    // Backfill: re-sync every note's wiki links before drawing, so notes edited via Canvas
-    // cards (or any path that bypasses the main editor's blur handler) still show up correctly.
-    // Iterate a snapshot — syncWikiLinks can unshift newly auto-created notes into Store.s.notes.
+    syncCanvasConnectionsToGraph();
     Store.s.notes.slice().forEach(n => syncWikiLinks(n));
     const notes = Store.s.notes;
     container.innerHTML = `<div class="notes-graph-wrap">
@@ -480,7 +574,7 @@ const Notes = (() => {
     });
     edges.forEach(e => { nodeById.get(e.a).degree++; nodeById.get(e.b).degree++; });
 
-    const radiusOf = nd => 3.5 + Math.min(nd.degree, 10) * 1.05;
+    const radiusOf = nd => 5 + Math.sqrt(nd.degree + 1) * 3.2;
     const FOCAL = 480;
 
     let panX = 0, panY = 0, scale = 1;
@@ -525,8 +619,8 @@ const Notes = (() => {
         ctx.beginPath();
         ctx.moveTo(a._sx, a._sy); ctx.lineTo(b._sx, b._sy);
         ctx.strokeStyle = hi ? accent : lineColor;
-        ctx.globalAlpha = (hi ? 0.6 : 0.22) * (graph3D ? Math.min(1, (a._persp + b._persp) / 2) : 1);
-        ctx.lineWidth = (hi ? 1.3 : 1) / scale;
+        ctx.globalAlpha = (hi ? 0.85 : 0.48) * (graph3D ? Math.min(1, (a._persp + b._persp) / 2) : 1);
+        ctx.lineWidth = (hi ? 2 : 1.25) / scale;
         ctx.stroke();
       });
       ctx.globalAlpha = 1;
@@ -718,29 +812,41 @@ const Notes = (() => {
     }, 0);
   }
 
-  /* ---------- Infinite Canvas — board of freeform cards, one mirror note per canvas ---------- */
-  // Each canvas owns exactly ONE companion note (cv.noteId) — cards themselves just hold their
-  // own title/text/color/font directly, they are NOT separate Store.s.notes entries anymore.
-  // Opening that note in the Notes list shows a compiled "Notecard 1: ... / Notecard 2: ..."
-  // read-through of the whole board, kept live by syncCanvasNote below.
-  function syncCanvasNote(cv) {
-    if (!cv.noteId) return;
-    const note = Store.s.notes.find(n => n.id === cv.noteId);
-    if (!note) return;
-    note.title = cv.name;
-    note.body = cv.cards.length
-      ? cv.cards.map((c, i) => `## ${(c.title || `Notecard ${i + 1}`).trim()}\n\n${c.text || "_empty_"}`).join("\n\n---\n\n")
-      : "_This canvas has no cards yet — switch to the Canvas tab and add one to see it appear here._";
-    syncWikiLinks(note);
+  /* ---------- Infinite Canvas — each card is a real note (shared with Notes + Graph) ---------- */
+  function mintNote(title, body, extra = {}, recordUndo = true) {
+    const n = Object.assign({
+      id: "n" + (Store.s.noteSeq++), title, body, color: null, font: null, canvasId: null,
+      links: [], history: [], createdAt: Date.now(),
+    }, extra);
+    Store.s.notes.unshift(n);
     Store.save();
+    if (recordUndo && typeof Undo !== "undefined") Undo.record();
+    return n;
   }
 
-  // The reverse half of the canvas↔note mirror: if this note IS a canvas's mirror note,
-  // re-derive that canvas's cards from the (possibly hand-edited) note body. Sections are
-  // "## Title\n\ntext" separated by "\n\n---\n\n" — exactly the shape syncCanvasNote writes —
-  // so editing the compiled note directly (retitling/rewriting/adding/removing a section)
-  // reshapes the actual Canvas cards too, and that in turn ripples into Graph View via the
-  // wiki-link resync that already runs on every note save.
+  function migrateCanvasToSharedNotes(cv) {
+    if (!cv.connections) cv.connections = [];
+    if (cv.noteId) {
+      const mirror = noteById(cv.noteId);
+      if (mirror && mirror.body && !cv.cards.length) applyNoteBodyToCanvas(mirror);
+    }
+    cv.cards.forEach(c => {
+      if (c.noteId) {
+        const n = noteById(c.noteId);
+        if (n) { n.canvasId = cv.id; if (c.color && !n.color) n.color = c.color; if (c.font && !n.font) n.font = c.font; }
+        return;
+      }
+      const n = mintNote(c.title || "Untitled", c.text || "", { canvasId: cv.id, color: c.color || null, font: c.font || null }, false);
+      c.noteId = n.id;
+      delete c.title; delete c.text; delete c.color; delete c.font;
+    });
+    if (cv.noteId) {
+      Store.s.notes = Store.s.notes.filter(n => n.id !== cv.noteId);
+      delete cv.noteId;
+    }
+    cv.name = canvasDisplayLabel(cv);
+  }
+
   function applyNoteBodyToCanvas(n) {
     const cv = Store.s.canvases.find(c => c.noteId === n.id);
     if (!cv) return false;
@@ -768,24 +874,9 @@ const Notes = (() => {
 
   function ensureCanvases() {
     if (!Store.s.canvases.length) {
-      const note = createNoteQuiet("Canvas 1", "");
-      Store.s.canvases.push({ id: "cv" + (Store.s.canvasSeq++), name: "Canvas 1", cards: [], connections: [], noteId: note.id });
+      Store.s.canvases.push({ id: "cv" + (Store.s.canvasSeq++), name: "Empty canvas", cards: [], connections: [] });
     }
-    Store.s.canvases.forEach(cv => {
-      if (!cv.connections) cv.connections = [];
-      // One-time migration from the old "every card is its own note" model: fold each
-      // note-backed card's content into the card itself, then delete the now-redundant note.
-      cv.cards.forEach(c => {
-        if (c.noteId) {
-          const n = Store.s.notes.find(x => x.id === c.noteId);
-          if (n) { c.title = c.title || n.title; c.text = n.body; c.color = c.color || n.color; }
-          Store.s.notes = Store.s.notes.filter(x => x.id !== c.noteId);
-          delete c.noteId;
-        }
-      });
-      if (!cv.noteId) cv.noteId = createNoteQuiet(cv.name, "").id;
-      syncCanvasNote(cv);
-    });
+    Store.s.canvases.forEach(cv => migrateCanvasToSharedNotes(cv));
     if (!activeCanvasId || !Store.s.canvases.find(c => c.id === activeCanvasId)) activeCanvasId = Store.s.canvases[0].id;
   }
 
@@ -796,8 +887,8 @@ const Notes = (() => {
     container.innerHTML = `
       <div class="canvas-tabs">
         ${Store.s.canvases.map(c => `
-          <button class="canvas-tab ${c.id === activeCanvasId ? "active" : ""}" data-id="${c.id}">
-            <span>${esc(c.name)}</span>
+          <button class="canvas-tab ${c.id === activeCanvasId ? "active" : ""}" data-id="${c.id}" title="${esc(canvasDisplayLabel(c))}">
+            <span class="canvas-tab-label">${esc(canvasDisplayLabel(c))}</span>
             ${Store.s.canvases.length > 1 ? `<i class="ico tab-del" data-ico="x" data-del="${c.id}" title="Delete canvas"></i>` : ""}
           </button>`).join("")}
         <button class="canvas-tab-add" id="canvas-add" title="New canvas"><i class="ico" data-ico="plus"></i></button>
@@ -813,7 +904,7 @@ const Notes = (() => {
               </marker>
             </defs></svg>
           </div>
-          ${cv.cards.length === 0 ? `<div class="canvas-empty-hint">Double-click anywhere — or hit ＋ Card — to drop a note. Drag a card's link dot onto another card to connect them. Right-click for more.</div>` : ""}
+          ${cv.cards.length === 0 ? `<div class="canvas-empty-hint">No notecards yet — double-click the board or hit ＋ Card to add one. Each card is a real note shared with Notes &amp; Graph.</div>` : ""}
         </div>
       </div>`;
     UI.mountIcons(container);
@@ -821,24 +912,9 @@ const Notes = (() => {
     container.querySelectorAll(".canvas-tab").forEach(tab => {
       tab.onclick = e => {
         if (e.target.closest("[data-del]") || activeCanvasId === tab.dataset.id) return;
-        activeCanvasId = tab.dataset.id; renderCanvasMode(container);
-      };
-      // Double-click a canvas tab to rename it — keeps its mirror note's title in sync too.
-      tab.ondblclick = e => {
-        e.stopPropagation();
-        const c = Store.s.canvases.find(x => x.id === tab.dataset.id);
-        const span = tab.querySelector("span");
-        const input = document.createElement("input");
-        input.type = "text"; input.value = c.name; input.className = "canvas-tab-rename";
-        span.replaceWith(input);
-        input.focus(); input.select();
-        const commit = () => {
-          c.name = input.value.trim() || c.name;
-          syncCanvasNote(c);
-          renderCanvasMode(container);
-        };
-        input.onblur = commit;
-        input.onkeydown = ev => { if (ev.key === "Enter") commit(); if (ev.key === "Escape") renderCanvasMode(container); };
+        activeCanvasId = tab.dataset.id;
+        notesCanvasFilter = tab.dataset.id;
+        renderCanvasMode(container);
       };
     });
     container.querySelectorAll("[data-del]").forEach(x => {
@@ -846,17 +922,16 @@ const Notes = (() => {
         e.stopPropagation();
         if (Store.s.canvases.length <= 1) return;
         const dead = Store.s.canvases.find(c => c.id === x.dataset.del);
-        if (dead && dead.noteId) Store.s.notes = Store.s.notes.filter(n => n.id !== dead.noteId);
+        if (dead) dead.cards.forEach(c => { if (c.noteId) Store.s.notes = Store.s.notes.filter(n => n.id !== c.noteId); });
         Store.s.canvases = Store.s.canvases.filter(c => c.id !== x.dataset.del);
         if (activeCanvasId === x.dataset.del) activeCanvasId = Store.s.canvases[0].id;
+        if (notesCanvasFilter === x.dataset.del) notesCanvasFilter = activeCanvasId;
         Store.save(); renderCanvasMode(container);
       };
     });
     $("#canvas-add").onclick = () => {
-      const name = `Canvas ${Store.s.canvases.length + 1}`;
-      const note = createNoteQuiet(name, "");
-      const c = { id: "cv" + (Store.s.canvasSeq++), name, cards: [], connections: [], noteId: note.id };
-      Store.s.canvases.push(c); activeCanvasId = c.id;
+      const c = { id: "cv" + (Store.s.canvasSeq++), name: "Empty canvas", cards: [], connections: [] };
+      Store.s.canvases.push(c); activeCanvasId = c.id; notesCanvasFilter = c.id;
       Store.save(); renderCanvasMode(container);
     };
 
@@ -895,14 +970,19 @@ const Notes = (() => {
     }
 
     function cardEl(card, idx) {
+      if (!card.noteId) {
+        const boot = mintNote("Untitled", "", { canvasId: cv.id }, false);
+        card.noteId = boot.id;
+      }
+      const n = canvasCardNote(card);
       const d = el("div", "canvas-card");
       d.dataset.cardId = card.id;
       d.style.left = card.x + "px"; d.style.top = card.y + "px";
       d.style.width = card.w + "px"; d.style.height = card.h + "px";
-      const colorHex = card.color ? (NOTE_COLORS.find(c => c.id === card.color) || {}).hex : null;
+      const colorHex = n?.color ? (NOTE_COLORS.find(c => c.id === n.color) || {}).hex : null;
       if (colorHex) { d.classList.add("tinted"); d.style.setProperty("--tint", colorHex); }
       d.innerHTML = `
-        <div class="canvas-card-head" title="Drag to move · double-click to open the whole canvas as a note · right-click for more">
+        <div class="canvas-card-head" title="Drag to move · double-click to open full editor · right-click for more">
           <button class="icon-btn card-color-dot" title="Card color"><i class="card-color-swatch" style="background:${colorHex || "transparent"};border-color:${colorHex || "var(--line-strong)"}"></i></button>
           <i class="ico card-link" data-ico="link" title="Drag onto another card to connect"></i>
           <span class="spacer"></span>
@@ -915,15 +995,18 @@ const Notes = (() => {
         <div class="canvas-font-pop hidden">
           ${NOTE_FONTS.map(f => `<button class="canvas-font-swatch" data-font="${esc(f.family)}" style="font-family:${f.family || "inherit"}">Aa</button>`).join("")}
         </div>
-        <input type="text" class="canvas-card-title" placeholder="Notecard ${idx + 1}" value="${esc(card.title || "")}">
-        <textarea placeholder="Type a note…" style="font-family:${card.font || ""}">${esc(card.text || "")}</textarea>
+        <input type="text" class="canvas-card-title" placeholder="Untitled" value="${esc(n?.title || "")}">
+        <div class="canvas-card-body" contenteditable="true" style="font-family:${n?.font || ""}"></div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
 
       const deleteCard = () => {
+        if (card.noteId) Store.s.notes = Store.s.notes.filter(x => x.id !== card.noteId);
         cv.cards = cv.cards.filter(c => c.id !== card.id);
         cv.connections = cv.connections.filter(c => c.from !== card.id && c.to !== card.id);
-        syncCanvasNote(cv); renderCanvasMode(container);
+        cv.name = canvasDisplayLabel(cv);
+        onNoteDataChange();
+        renderCanvasMode(container);
       };
       d.querySelector(".card-del").onclick = deleteCard;
 
@@ -932,28 +1015,42 @@ const Notes = (() => {
       d.querySelector(".card-color-dot").onclick = e => { e.stopPropagation(); fontPop.classList.add("hidden"); colorPop.classList.toggle("hidden"); };
       d.querySelectorAll(".canvas-color-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
-        card.color = sw.dataset.color || null; Store.save();
+        if (n) { n.color = sw.dataset.color || null; onNoteDataChange(n); }
         renderCanvasMode(container);
       });
       d.querySelectorAll(".canvas-font-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
-        card.font = sw.dataset.font || null; Store.save();
+        if (n) { n.font = sw.dataset.font || null; onNoteDataChange(n); }
         renderCanvasMode(container);
       });
 
       const titleInput = d.querySelector(".canvas-card-title");
-      titleInput.oninput = () => { card.title = titleInput.value; syncCanvasNote(cv); };
+      titleInput.oninput = () => { if (n) { n.title = titleInput.value; onNoteDataChange(n); } };
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
-      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); d.querySelector("textarea").focus(); } });
+      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
 
-      const ta = d.querySelector("textarea");
-      ta.oninput = () => { card.text = ta.value; syncCanvasNote(cv); };
+      const bodyEd = d.querySelector(".canvas-card-body");
+      if (n) refreshEditorContent(bodyEd, n);
+      bodyEd.oninput = () => {
+        if (!n) return;
+        n.body = serializeEditor(bodyEd);
+        Store.save();
+        if (typeof Undo !== "undefined") Undo.recordDebounced("canvas-card-" + n.id);
+        onNoteDataChange(n);
+      };
+      bodyEd.onblur = () => {
+        if (!n) return;
+        n.body = serializeEditor(bodyEd);
+        syncWikiLinks(n);
+        refreshEditorContent(bodyEd, n);
+        onNoteDataChange(n);
+      };
+      bodyEd.addEventListener("mousedown", e => e.stopPropagation());
 
       const head = d.querySelector(".canvas-card-head");
       head.addEventListener("dblclick", e => {
         e.stopPropagation();
-        if (!cv.noteId) return;
-        openNoteModal(cv.noteId);
+        if (n) openNoteModal(n.id);
       });
       head.addEventListener("mousedown", e => {
         if (e.target.closest(".card-link") || e.target.closest(".card-del")) return;
@@ -966,23 +1063,25 @@ const Notes = (() => {
           d.style.left = card.x + "px"; d.style.top = card.y + "px";
           drawConnectors();
         };
-        const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); Store.save(); };
+        const up = () => {
+          window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+          Store.save(); scheduleNotesRefresh();
+        };
         window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
       });
 
-      // Right-click a card → rename / recolor / re-font / delete, without hunting for the tiny dot.
       d.addEventListener("contextmenu", e => {
         e.preventDefault(); e.stopPropagation();
         const r = outer.getBoundingClientRect();
         showContextMenu(outer, e.clientX - r.left, e.clientY - r.top, [
           { label: "Rename card", onClick: () => { titleInput.focus(); titleInput.select(); } },
+          { label: "Open full editor", onClick: () => { if (n) openNoteModal(n.id); } },
           { label: "Change color", onClick: () => { colorPop.classList.remove("hidden"); fontPop.classList.add("hidden"); } },
           { label: "Change font", onClick: () => { fontPop.classList.remove("hidden"); colorPop.classList.add("hidden"); } },
           { label: "Delete card", onClick: deleteCard },
         ]);
       });
 
-      // drag from the link dot onto another card to draw a connector
       d.querySelector(".card-link").addEventListener("mousedown", e => {
         e.stopPropagation(); e.preventDefault();
         const tempLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -1005,14 +1104,15 @@ const Notes = (() => {
             if (targetCard) {
               const exists = cv.connections.some(c => (c.from === card.id && c.to === targetCard.id) || (c.from === targetCard.id && c.to === card.id));
               if (!exists) cv.connections.push({ id: "cn" + Date.now(), from: card.id, to: targetCard.id });
-              Store.save(); drawConnectors();
+              syncCanvasConnectionsToGraph();
+              onNoteDataChange(n);
+              drawConnectors();
             }
           }
         };
         window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
       });
 
-      // drag to resize
       const handle = d.querySelector(".canvas-resize-handle");
       handle.addEventListener("mousedown", e => {
         e.stopPropagation();
@@ -1035,9 +1135,11 @@ const Notes = (() => {
     drawConnectors();
 
     function addCardAt(x, y) {
-      const card = { id: "cc" + Date.now() + Math.floor(Math.random() * 1000), x: x - 110, y: y - 65, w: 220, h: 150, title: "", text: "", color: null, font: null };
+      const note = mintNote("Untitled", "", { canvasId: cv.id });
+      const card = { id: "cc" + Date.now() + Math.floor(Math.random() * 1000), noteId: note.id, x: x - 110, y: y - 65, w: 220, h: 150 };
       cv.cards.push(card);
-      syncCanvasNote(cv);
+      cv.name = canvasDisplayLabel(cv);
+      onNoteDataChange(note);
       renderCanvasMode(container);
     }
     $("#canvas-add-card").onclick = () => {
@@ -1163,24 +1265,16 @@ const Notes = (() => {
   }
 
   function createNote(title, body, extra) {
-    const n = Object.assign({ id: "n" + (Store.s.noteSeq++), title, body, color: null, links: [], history: [], createdAt: Date.now() }, extra || {});
-    Store.s.notes.unshift(n);
+    const n = mintNote(title, body, extra);
     activeNoteId = n.id;
-    Store.save();
-    if (typeof Undo !== "undefined") Undo.record();
+    if (n.canvasId) attachNoteToCanvas(n, n.canvasId);
     render();
     return n;
   }
 
-  // Same as createNote, but skips the top-level render() — for callers (like Canvas card
-  // creation, or the wiki-link auto-create engine) that mutate more state afterward and
-  // re-render once themselves. Calling the full render() mid-flow there would replace
-  // #notes-mode-body and orphan any container reference the caller is still holding.
   function createNoteQuiet(title, body, extra) {
-    const n = Object.assign({ id: "n" + (Store.s.noteSeq++), title, body, color: null, links: [], history: [], createdAt: Date.now() }, extra || {});
-    Store.s.notes.unshift(n);
-    Store.save();
-    if (typeof Undo !== "undefined") Undo.record();
+    const n = mintNote(title, body, extra);
+    if (n.canvasId) attachNoteToCanvas(n, n.canvasId);
     return n;
   }
 

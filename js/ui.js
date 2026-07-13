@@ -729,9 +729,9 @@ const UI = (() => {
     });
 
     (Store.s.notes || []).forEach(n => {
-      const isCanvas = (Store.s.canvases || []).some(c => c.noteId === n.id);
+      const cv = n.canvasId ? (Store.s.canvases || []).find(c => c.id === n.canvasId) : null;
       cmds.push({
-        title: n.title || "Untitled", sub: isCanvas ? "Canvas" : "Note", icon: isCanvas ? "cube" : "file",
+        title: n.title || "Untitled", sub: cv ? "Notecard · canvas" : "Note", icon: cv ? "cube" : "file",
         body: [n.title, n.body || ""].join(" ").toLowerCase(),
         run: () => { showView("notes"); Notes.openNoteModal(n.id); },
       });

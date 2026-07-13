@@ -1080,6 +1080,23 @@ canvas.chart { width: 100%; }
 .note-tile:hover .note-tile-del { opacity: .6; }
 .note-tile-del:hover { opacity: 1 !important; color: var(--bad); }
 .note-tile-snip { font-size: .74rem; color: var(--muted2); line-height: 1.5; flex: 1; overflow: hidden; }
+.note-tile-snip.md-preview {
+  font-size: .72rem; max-height: 4.2em; padding: 0; border: none; background: none;
+  color: var(--muted2); line-height: 1.45;
+}
+.note-tile-snip.md-preview h1, .note-tile-snip.md-preview h2, .note-tile-snip.md-preview h3 {
+  font-size: .72rem; margin: 0; display: inline; font-weight: 600;
+}
+.note-tile-snip.md-preview b, .note-tile-snip.md-preview strong { font-weight: 600; color: var(--text); }
+.note-tile-snip.md-preview span[style*="color"] { font-weight: 500; }
+.canvas-tab-label { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-card-body {
+  flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; font-size: .76rem; line-height: 1.45;
+  outline: none; color: var(--text);
+}
+.canvas-card-body:focus { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: var(--radius-sm); }
+.canvas-card-body h1, .canvas-card-body h2, .canvas-card-body h3 { font-size: .78rem; margin: 4px 0; }
+.canvas-card-body .wikilink { pointer-events: none; }
 .note-tile-tag {
   display: inline-flex; align-items: center; gap: 5px; font-size: .66rem; letter-spacing: .03em; text-transform: uppercase;
   color: var(--text-tertiary); margin-top: 2px;

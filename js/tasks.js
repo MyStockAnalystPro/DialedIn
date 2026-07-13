@@ -10,6 +10,24 @@ const Tasks = (() => {
   let filter = { text: "", twoMin: false, tag: null };
 
   /* ---------- CRUD ---------- */
+  function syncTaskToTimebox(task) {
+    if (!task) return;
+    Object.keys(Store.s.timebox).forEach(date => {
+      tbBlocksFor(date).forEach(b => {
+        if (b.taskId === task.id) {
+          b.title = task.title;
+          if (task.estimate && !b.dur) b.dur = task.estimate;
+        }
+      });
+    });
+  }
+
+  function purgeTaskFromTimebox(taskId) {
+    Object.keys(Store.s.timebox).forEach(date => {
+      Store.s.timebox[date] = tbBlocksFor(date).filter(b => b.taskId !== taskId);
+    });
+  }
+
   function createTask(props) {
     const t = Object.assign({
       id: "t" + (Store.s.taskSeq++),
@@ -41,6 +59,7 @@ const Tasks = (() => {
     if (!t || t.status === "done") return;
     t.status = "done";
     t.completedAt = Date.now();
+    syncTaskToTimebox(t);
     if (typeof Undo !== "undefined") Undo.record();
     toast(`✅ Marked done — "${t.title}"`, "good");
     Game.onTaskCompleted(t);
@@ -58,6 +77,7 @@ const Tasks = (() => {
   }
 
   function deleteTask(id) {
+    purgeTaskFromTimebox(id);
     Store.s.tasks = Store.s.tasks.filter(t => t.id !== id);
     Store.save();
     if (typeof Undo !== "undefined") Undo.record();
@@ -308,6 +328,7 @@ const Tasks = (() => {
             rv === "m1" ? { every: 1, unit: "month" } :
             rv === "nth32" ? { nth: { week: 3, dow: 2 } } :
             rv === "nth11" ? { nth: { week: 1, dow: 1 } } : null;
+          syncTaskToTimebox(t);
           Store.save(); render();
         }},
       ]);
