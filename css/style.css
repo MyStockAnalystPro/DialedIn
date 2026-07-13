@@ -1088,7 +1088,11 @@ canvas.chart { width: 100%; }
   font-size: .72rem; margin: 0; display: inline; font-weight: 600;
 }
 .note-tile-snip.md-preview b, .note-tile-snip.md-preview strong { font-weight: 600; color: var(--text); }
-.note-tile-snip.md-preview span[style*="color"] { font-weight: 500; }
+.canvas-card-body .rt-color { font-weight: 500; }
+.canvas-card-body .rt-font { font-weight: 400; }
+.note-tile-snip .rt-color { font-weight: 500; }
+.note-tile-snip.md-preview span[style*="color"] { color: inherit; }
+.note-tile-snip.md-preview .rt-color { font-weight: 500; }
 .canvas-tab-label { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-card-fmt {
   display: flex; align-items: center; gap: 3px; padding: 2px 6px 4px; flex-wrap: wrap;
@@ -1103,18 +1107,17 @@ canvas.chart { width: 100%; }
   cursor: pointer; flex-shrink: 0;
 }
 .canvas-card-body-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.canvas-card-preview {
-  flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; font-size: .76rem; line-height: 1.45;
-  color: var(--text); cursor: text;
-}
-.canvas-card-preview .muted2 { color: var(--muted2); font-size: .72rem; }
-.canvas-card-preview b, .canvas-card-preview strong { font-weight: 600; }
-.canvas-card-body.hidden { display: none !important; }
-.canvas-card-preview.hidden { display: none !important; }
 .canvas-card-body {
   flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; font-size: .76rem; line-height: 1.45;
-  outline: none; color: var(--text);
+  outline: none; color: var(--text); cursor: text;
 }
+.canvas-card-body:empty:before {
+  content: attr(data-placeholder);
+  color: var(--muted2);
+  font-size: .72rem;
+  pointer-events: none;
+}
+.canvas-card-body b, .canvas-card-body strong { font-weight: 600; }
 .canvas-card-body:focus { background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: var(--radius-sm); }
 .canvas-card-body h1, .canvas-card-body h2, .canvas-card-body h3 { font-size: .78rem; margin: 4px 0; }
 .canvas-card-body .wikilink { pointer-events: none; }

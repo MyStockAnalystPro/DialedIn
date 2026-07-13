@@ -86,15 +86,23 @@ const Notes = (() => {
     if (!src) return "";
     let s = src;
     NOTE_COLORS.forEach(c => {
-      const re = new RegExp(`(^|[\\s(])(${c.id}):([^\\s\\{\\}\\n|]+)`, "gi");
+      // Match at start, after whitespace, or after common punctuation — never inside {{…}} tokens.
+      const re = new RegExp(`(^|[\\s(,\\[\\{])(${c.id}):([^\\s\\{\\}\\n|,;]+)`, "gi");
       s = s.replace(re, (m, pre, id, text) => `${pre}{{${c.id}:${text.trim()}}}`);
     });
-    s = s.replace(/(?:^|\s)font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
+    s = s.replace(/(?:^|[\s(,])font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
       const trimmed = text.trim();
       if (trimmed.startsWith("{{")) return m;
-      return ` {{font:${font.trim()}|${trimmed}}}`;
+      const lead = m.startsWith(" ") || m.startsWith("\t") ? " " : "";
+      return `${lead}{{font:${font.trim()}|${trimmed}}}`;
     });
     return s.trim();
+  }
+
+  function normalizeNoteBody(n) {
+    if (!n?.body) return;
+    const norm = normalizeMarkupSource(n.body);
+    if (norm !== n.body) n.body = norm;
   }
 
   // Iteratively resolves nested {{color:…}} / {{font:…|…}} innermost-first.
@@ -104,18 +112,44 @@ const Notes = (() => {
       prev = out;
       out = out.replace(/\{\{(?!font:)(\w+):([^{}]+)\}\}/g, (m, colorId, text) => {
         const c = NOTE_COLORS.find(cc => cc.id === colorId);
-        return c ? `<span style="color:${c.hex}">${text}</span>` : text;
+        return c ? `<span class="rt-color" style="color:${c.hex} !important">${text}</span>` : text;
       });
       out = out.replace(/\{\{font:([^|{}]+)\|([^{}]+)\}\}/g, (m, font, text) =>
-        `<span style="font-family:${font}">${text}</span>`);
+        `<span class="rt-font" style="font-family:${font} !important">${text}</span>`);
     }
     return out;
   }
 
+  // Fast path for inline rich text — used on canvas previews and note tiles.
+  function renderRichText(src) {
+    if (!src) return "";
+    let out = esc(normalizeMarkupSource(src));
+    out = renderStyledTokens(out);
+    NOTE_COLORS.forEach(c => {
+      const re = new RegExp(`(^|[^\\w>])(?:&amp;)?(${c.id}):([^\\s<&]+)`, "gi");
+      out = out.replace(re, (m, pre, id, text) =>
+        `${pre}<span class="rt-color" style="color:${c.hex} !important">${text}</span>`);
+    });
+    out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
+    out = out.replace(/\*([^*\n]+)\*/g, "<i>$1</i>");
+    return out;
+  }
+
   function bodyForRender(n) {
-    let body = normalizeMarkupSource(n?.body || "");
+    const raw = (n?.body || "").trim();
+    let body = normalizeMarkupSource(raw);
     if (n?.font && body && !body.includes("{{font:")) body = `{{font:${n.font}|${body}}}`;
     return body;
+  }
+
+  function cardBodyText(card, n) {
+    if (n?.body?.trim()) return n.body;
+    if (card?.text?.trim()) {
+      if (n) n.body = card.text;
+      return card.text;
+    }
+    return "";
   }
 
   /* ---------- Markdown renderer (with wiki links, toggles, bookmarks) ---------- */
@@ -281,7 +315,7 @@ const Notes = (() => {
   }
 
   function renderNoteBodyHtml(n) {
-    return renderMarkdown(bodyForRender(n));
+    return renderRichText(bodyForRender(n));
   }
 
   function notePreviewHtml(n) {
@@ -312,10 +346,11 @@ const Notes = (() => {
     Store.save();
   }
 
-  let prettyPrintTimer = null;
-  function schedulePrettyPrint(ed, n) {
-    clearTimeout(prettyPrintTimer);
-    prettyPrintTimer = setTimeout(() => prettyPrintEditor(ed, n), 280);
+  const prettyPrintTimers = new Map();
+  function schedulePrettyPrint(ed, n, ms = 280) {
+    const key = n?.id || "default";
+    clearTimeout(prettyPrintTimers.get(key));
+    prettyPrintTimers.set(key, setTimeout(() => prettyPrintEditor(ed, n), ms));
   }
 
   function noteMatchesSearch(n, q) {
@@ -917,7 +952,14 @@ const Notes = (() => {
     cv.cards.forEach(c => {
       if (c.noteId) {
         const n = noteById(c.noteId);
-        if (n) { n.canvasId = cv.id; if (c.color && !n.color) n.color = c.color; if (c.font && !n.font) n.font = c.font; }
+        if (n) {
+          n.canvasId = cv.id;
+          if (c.text?.trim() && !n.body?.trim()) n.body = c.text;
+          if (c.title?.trim() && (!n.title || n.title === "Untitled")) n.title = c.title;
+          if (c.color && !n.color) n.color = c.color;
+          if (c.font && !n.font) n.font = c.font;
+        }
+        delete c.title; delete c.text; delete c.color; delete c.font;
         return;
       }
       const n = mintNote(c.title || "Untitled", c.text || "", { canvasId: cv.id, color: c.color || null, font: c.font || null }, false);
@@ -960,12 +1002,7 @@ const Notes = (() => {
     if (!Store.s.canvases.length) {
       Store.s.canvases.push({ id: "cv" + (Store.s.canvasSeq++), name: "Empty canvas", cards: [], connections: [] });
     }
-    Store.s.notes.forEach(n => {
-      if (n.body && n.body.includes(":")) {
-        const norm = normalizeMarkupSource(n.body);
-        if (norm !== n.body) n.body = norm;
-      }
-    });
+    Store.s.notes.forEach(normalizeNoteBody);
     Store.s.canvases.forEach(cv => migrateCanvasToSharedNotes(cv));
     if (!activeCanvasId || !Store.s.canvases.find(c => c.id === activeCanvasId)) activeCanvasId = Store.s.canvases[0].id;
   }
@@ -1093,8 +1130,7 @@ const Notes = (() => {
           ${NOTE_COLORS.map(c => `<button type="button" class="canvas-fmt-color" data-color="${c.id}" style="background:${c.hex}" title="Text ${c.id}"></button>`).join("")}
         </div>
         <div class="canvas-card-body-wrap">
-          <div class="canvas-card-preview"></div>
-          <div class="canvas-card-body hidden" contenteditable="true"></div>
+          <div class="canvas-card-body" contenteditable="true" data-placeholder="Click to type…"></div>
         </div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
@@ -1111,38 +1147,19 @@ const Notes = (() => {
 
       const colorPop = d.querySelector(".canvas-color-pop");
       const fontPop = d.querySelector(".canvas-font-pop");
-      const preview = d.querySelector(".canvas-card-preview");
       const bodyEd = d.querySelector(".canvas-card-body");
 
-      function updateCardPreview() {
-        preview.innerHTML = (n && (n.body?.trim() || n.font))
-          ? renderNoteBodyHtml(n)
-          : '<span class="muted2">Click to type…</span>';
-      }
-
-      function enterCardEdit() {
-        preview.classList.add("hidden");
-        bodyEd.classList.remove("hidden");
-        if (n) refreshEditorContent(bodyEd, n);
-        bodyEd.focus();
-      }
-
-      function exitCardEdit() {
+      function syncCardBodyFromNote() {
         if (!n) return;
-        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
-        syncWikiLinks(n);
-        Store.save();
-        bodyEd.classList.add("hidden");
-        preview.classList.remove("hidden");
-        updateCardPreview();
-        onNoteDataChange(n);
+        const text = cardBodyText(card, n);
+        if (text && text !== n.body) n.body = normalizeMarkupSource(text);
+        normalizeNoteBody(n);
+        refreshEditorContent(bodyEd, n);
       }
 
-      updateCardPreview();
-      preview.onclick = e => { e.stopPropagation(); enterCardEdit(); };
-      preview.addEventListener("mousedown", e => e.stopPropagation());
+      syncCardBodyFromNote();
 
-      d.querySelector(".card-color-dot").onclick = e => { e.stopPropagation(); fontPop.classList.add("hidden"); colorPop.classList.toggle("hidden"); };
+      const titleInput = d.querySelector(".canvas-card-title");
       d.querySelectorAll(".canvas-color-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
         colorPop.classList.add("hidden");
@@ -1152,38 +1169,31 @@ const Notes = (() => {
         e.stopPropagation();
         fontPop.classList.add("hidden");
         const font = sw.dataset.font;
-        if (font) {
-          if (bodyEd.classList.contains("hidden")) enterCardEdit();
+        if (font && n) {
           applyCanvasCmd(bodyEd, "fontName", font);
           commitCanvasBody(bodyEd, n);
         }
       });
 
-      const titleInput = d.querySelector(".canvas-card-title");
       titleInput.oninput = () => { if (n) { n.title = titleInput.value; onNoteDataChange(n); } };
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
-      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); enterCardEdit(); } });
+      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
 
-      if (n) { /* preview already set */ }
       d.querySelectorAll(".canvas-fmt-btn").forEach(b => {
         b.addEventListener("mousedown", e => e.preventDefault());
         b.onclick = e => {
           e.stopPropagation();
-          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           applyCanvasCmd(bodyEd, b.dataset.cmd);
           commitCanvasBody(bodyEd, n);
-          updateCardPreview();
         };
       });
       d.querySelectorAll(".canvas-fmt-color").forEach(sw => {
         sw.addEventListener("mousedown", e => e.preventDefault());
         sw.onclick = e => {
           e.stopPropagation();
-          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           const c = NOTE_COLORS.find(x => x.id === sw.dataset.color);
           if (c) applyCanvasCmd(bodyEd, "foreColor", c.hex);
           commitCanvasBody(bodyEd, n);
-          updateCardPreview();
         };
       });
       bodyEd.oninput = () => {
@@ -1191,11 +1201,19 @@ const Notes = (() => {
         n.body = serializeEditor(bodyEd);
         Store.save();
         if (typeof Undo !== "undefined") Undo.recordDebounced("canvas-card-" + n.id);
-        schedulePrettyPrint(bodyEd, n);
+        schedulePrettyPrint(bodyEd, n, 80);
+      };
+      bodyEd.onblur = () => {
+        if (!n) return;
+        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
+        delete card.text; delete card.title;
+        syncWikiLinks(n);
+        Store.save();
+        refreshEditorContent(bodyEd, n);
         onNoteDataChange(n);
       };
-      bodyEd.onblur = () => exitCardEdit();
       bodyEd.addEventListener("mousedown", e => e.stopPropagation());
+      d.querySelector(".canvas-card-body-wrap").addEventListener("mousedown", e => e.stopPropagation());
 
       const head = d.querySelector(".canvas-card-head");
       head.addEventListener("dblclick", e => {
@@ -1344,10 +1362,6 @@ const Notes = (() => {
     Store.save();
     refreshEditorContent(bodyEd, n);
     onNoteDataChange(n);
-    const preview = bodyEd.closest(".canvas-card")?.querySelector(".canvas-card-preview");
-    if (preview && bodyEd.classList.contains("hidden")) {
-      preview.innerHTML = renderNoteBodyHtml(n) || '<span class="muted2">Click to type…</span>';
-    }
   }
 
   // Serializes the rich-text (contenteditable) DOM of the note editor back into our plain-text
