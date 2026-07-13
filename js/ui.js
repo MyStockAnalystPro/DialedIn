@@ -332,7 +332,11 @@ const UI = (() => {
   function initScratchpad() {
     const pad = $("#scratchpad"), txt = $("#scratch-text");
     txt.value = Store.s.scratchpad || "";
-    txt.oninput = () => { Store.s.scratchpad = txt.value; Store.save(); };
+    txt.oninput = () => {
+      Store.s.scratchpad = txt.value;
+      Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("scratchpad");
+    };
     $("#scratch-toggle").onclick = () => pad.classList.toggle("hidden");
     $("#scratch-close").onclick = () => pad.classList.add("hidden");
   }
@@ -507,6 +511,16 @@ const UI = (() => {
   function initShortcuts() {
     document.addEventListener("keydown", e => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCommandPalette(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (typeof Undo !== "undefined") Undo.undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) {
+        e.preventDefault();
+        if (typeof Undo !== "undefined") Undo.redo();
+        return;
+      }
       if (e.key === "Escape") { if ($("#cmd-palette-back")) closeCommandPalette(); else if (tour.active) closeTour(); else exitZen(); return; }
       if (Store.s.settings.shortcutsEnabled === false) return;
       if (isTypingContext()) return;
@@ -523,6 +537,9 @@ const UI = (() => {
   function showShortcutHelp() {
     modal("⌨️ Keyboard Shortcuts", `
       <div class="stat-line"><span>Ctrl/Cmd + K</span><b>Search anything (always on)</b></div>
+      <div class="stat-line"><span>Ctrl/Cmd + Z</span><b>Undo last action or typing</b></div>
+      <div class="stat-line"><span>Ctrl/Cmd + Y</span><b>Redo (also Cmd/Ctrl + Shift + Z)</b></div>
+      <div class="stat-line"><span>↓ / ↑</span><b>Timebox: month calendar ↔ day view</b></div>
       <div class="stat-line"><span>Settings</span><b>Toggle shortcuts on/off</b></div>
       <div class="stat-line"><span>1–9</span><b>Switch views</b></div>
       <div class="stat-line"><span>Space</span><b>Start / pause timer</b></div>

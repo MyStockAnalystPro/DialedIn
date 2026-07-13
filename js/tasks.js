@@ -30,6 +30,7 @@ const Tasks = (() => {
     }, props);
     Store.s.tasks.push(t);
     Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
     return t;
   }
 
@@ -40,6 +41,7 @@ const Tasks = (() => {
     if (!t || t.status === "done") return;
     t.status = "done";
     t.completedAt = Date.now();
+    if (typeof Undo !== "undefined") Undo.record();
     toast(`✅ Marked done — "${t.title}"`, "good");
     Game.onTaskCompleted(t);
     spawnRecurrence(t);
@@ -50,12 +52,16 @@ const Tasks = (() => {
     const t = byId(id);
     if (!t) return;
     t.status = "todo"; t.completedAt = null;
-    Store.save(); render();
+    Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
+    render();
   }
 
   function deleteTask(id) {
     Store.s.tasks = Store.s.tasks.filter(t => t.id !== id);
-    Store.save(); render();
+    Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
+    render();
   }
 
   /* ---------- Recurring engine ---------- */
@@ -647,6 +653,7 @@ const Tasks = (() => {
     };
     blocks.push(b);
     Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
     return b;
   }
 
@@ -706,11 +713,16 @@ const Tasks = (() => {
       </div>`,
       [
         { label: "Delete", cls: "danger", onClick: () => {
+          if (typeof Undo !== "undefined") Undo.record();
           Store.s.timebox[date] = tbBlocksFor(date).filter(b => b.id !== block.id);
           Store.save(); renderTimeboxView();
         } },
         { label: "Cancel", onClick: () => {
-          if (isNew) { Store.s.timebox[date] = tbBlocksFor(date).filter(b => b.id !== block.id); Store.save(); renderTimeboxView(); }
+          if (isNew) {
+            if (typeof Undo !== "undefined") Undo.record();
+            Store.s.timebox[date] = tbBlocksFor(date).filter(b => b.id !== block.id);
+            Store.save(); renderTimeboxView();
+          }
         } },
         { label: "Save", cls: "primary", onClick: m => {
           block.title = m.querySelector("#tbe-title").value.trim() || "Untitled";
@@ -719,6 +731,7 @@ const Tasks = (() => {
           block.dur = Math.max(5, parseInt(m.querySelector("#tbe-dur").value, 10) || 30);
           block.taskId = m.querySelector("#tbe-task").value || null;
           if (block.taskId) { const t = byId(block.taskId); if (t) t.title = block.title; }
+          if (typeof Undo !== "undefined") Undo.record();
           Store.save(); renderTimeboxView();
         } },
       ], { sticky: true });
@@ -739,23 +752,38 @@ const Tasks = (() => {
     UI.toast("Added to the pool — drag it onto the calendar, or click-drag to draw a block");
   }
 
-  // Global Escape handler — the only remaining zoom step is Month → Day; the old "zoom into an
-  // hour to see minutes" stage is gone entirely now that the day grid shows exact minutes always.
-  let tbEscHandler = null;
-  function bindTbEscHandler() {
-    if (tbEscHandler) document.removeEventListener("keydown", tbEscHandler);
-    tbEscHandler = e => {
-      if (e.key !== "Escape") return;
-      if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  // Global keyboard handler for Timebox — Esc month→day, ↓ day→month, ↑ month→day
+  let tbKeyHandler = null;
+  function bindTbKeyHandler() {
+    if (tbKeyHandler) document.removeEventListener("keydown", tbKeyHandler);
+    tbKeyHandler = e => {
       const view = document.getElementById("view-timebox");
       if (!view || !view.classList.contains("active")) return;
-      if (tbViewMode === "month") { tbViewMode = "day"; renderTimeboxView(); }
+      if (document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+      if (document.querySelector(".note-modal-back") || document.querySelector("#modal-root")?.children.length) return;
+
+      if (e.key === "ArrowDown" && tbViewMode === "day") {
+        e.preventDefault();
+        tbViewMode = "month";
+        tbMonthCursor = tbDate().slice(0, 7);
+        renderTimeboxView();
+        return;
+      }
+      if (e.key === "ArrowUp" && tbViewMode === "month") {
+        e.preventDefault();
+        tbViewMode = "day";
+        renderTimeboxView();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (tbViewMode === "month") { tbViewMode = "day"; renderTimeboxView(); }
+      }
     };
-    document.addEventListener("keydown", tbEscHandler);
+    document.addEventListener("keydown", tbKeyHandler);
   }
 
   function renderTimeboxView() {
-    bindTbEscHandler();
+    bindTbKeyHandler();
     const v = $("#view-timebox");
     if (tbViewMode === "month") { renderTimeboxMonth(v); return; }
 
@@ -784,7 +812,7 @@ const Tasks = (() => {
             <button class="btn sm primary" id="tb-apply-routine" title="Apply your saved routine — recreates tasks & schedule, no retyping">Apply routine${Store.s.routine ? "" : " (none saved)"}</button>
           ` : ""}
         </h2>
-        <div class="card-sub">Drag a task from the pool onto the calendar, or click-drag directly on the grid to draw a block at the exact minute you want. Drag a block to move it, drag its bottom edge to resize, click it to rename, time, color, or link it to a task. Scroll past the bottom (or Esc) to zoom out to the month view.</div>
+        <div class="card-sub">Drag a task from the pool onto the calendar, or click-drag directly on the grid to draw a block at the exact minute you want. Drag a block to move it, drag its bottom edge to resize, click it to rename, time, color, or link it to a task. <b>↓</b> zooms out to the month calendar; scroll past the bottom or Esc also opens month view.</div>
         <div class="quickadd-row" style="margin-bottom:12px">
           <input type="text" id="tb-quick-add" placeholder="Add a task for ${viewDate === today ? "today" : dateLabel}…">
           <button class="btn primary" id="tb-quick-add-btn">＋ Add</button>
@@ -804,6 +832,7 @@ const Tasks = (() => {
     $("#tb-copy-yday").onclick = () => copyScheduleBetween(ydayStr, viewDate, false);
     $("#tb-copy-tomorrow").onclick = () => copyScheduleBetween(viewDate, tmrwStr, true);
     if ($("#tb-clear-day")) $("#tb-clear-day").onclick = () => {
+      if (typeof Undo !== "undefined") Undo.record();
       Store.s.timebox[viewDate] = [];
       Store.save(); renderTimeboxView();
       UI.toast("Day's schedule cleared");
@@ -881,12 +910,13 @@ const Tasks = (() => {
       const t = id && byId(id);
       if (!t) return;
       tbAddBlock(viewDate, { taskId: t.id, title: t.title, start: minFromClientY(e.clientY), dur: t.estimate || 30 });
-      Store.save(); renderTimeboxView();
+      renderTimeboxView();
     });
     pool.addEventListener("dragover", e => e.preventDefault());
     pool.addEventListener("drop", e => {
       e.preventDefault();
       const id = e.dataTransfer.getData("text/task");
+      if (typeof Undo !== "undefined") Undo.record();
       Store.s.timebox[viewDate] = tbBlocksFor(viewDate).filter(b => b.taskId !== id);
       Store.save(); renderTimeboxView();
     });
@@ -928,6 +958,7 @@ const Tasks = (() => {
       };
       const up = () => {
         window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+        if (moved && typeof Undo !== "undefined") Undo.record();
         Store.save();
         if (!moved) openBlockEditor(date, b, false);
         else renderTimeboxView();
@@ -942,10 +973,24 @@ const Tasks = (() => {
         d.style.height = Math.max(16, b.dur / 60 * TB_HOUR_H) + "px";
         d.querySelector(".tb-block-time").textContent = `${tbMinToLabel(b.start)} – ${tbMinToLabel(b.start + b.dur)}`;
       };
-      const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); Store.save(); renderTimeboxView(); };
+      const up = () => {
+        window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+        if (typeof Undo !== "undefined") Undo.record();
+        Store.save(); renderTimeboxView();
+      };
       window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
     });
     return d;
+  }
+
+  function tbMonthEventHtml(b) {
+    const colorHex = b.color ? (TB_COLORS.find(c => c.id === b.color) || {}).hex : "var(--muted2)";
+    return `<div class="tb-month-event">
+      <span class="tb-month-event-bar" style="background:${colorHex}"></span>
+      <span class="tb-month-event-dot"></span>
+      <span class="tb-month-event-title">${esc(b.title || "Untitled")}</span>
+      <span class="tb-month-event-time">${tbMinToLabel(b.start)}</span>
+    </div>`;
   }
 
   function renderTimeboxMonth(v) {
@@ -968,16 +1013,19 @@ const Tasks = (() => {
           <span class="tb-date-label">${monthLabel}</span>
           <button class="icon-btn" id="tb-m-next" title="Next month"><i class="ico" data-ico="chevron"></i></button>
         </h2>
-        <div class="card-sub">Click a day, or focus it and press ↑/Enter, or scroll up on it, to zoom into its minute-precision calendar. Esc jumps back.</div>
+        <div class="card-sub"><b>↑</b> returns to the day timeboxing view for the selected day (or today). Click a day, press Enter, or scroll up on a day to zoom into its minute-precision calendar. <b>↓</b> from day view opens this month calendar.</div>
         <div class="tb-month-grid" id="tb-month-grid">
           ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => `<div class="tb-month-dow">${d}</div>`).join("")}
           ${cells.map(d => {
             if (!d) return `<div class="tb-month-cell empty"></div>`;
             const dateStr = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-            const count = tbCount(dateStr);
-            return `<button class="tb-month-cell ${dateStr === today ? "today" : ""}" data-date="${dateStr}">
+            const blocks = tbBlocksFor(dateStr).slice().sort((a, b) => a.start - b.start);
+            const maxShow = 4;
+            const events = blocks.slice(0, maxShow).map(tbMonthEventHtml).join("");
+            const more = blocks.length > maxShow ? `<div class="tb-month-more">+${blocks.length - maxShow} more</div>` : "";
+            return `<button class="tb-month-cell ${dateStr === today ? "today" : ""}" data-date="${dateStr}" tabindex="0">
               <span class="tb-month-daynum">${d}</span>
-              ${count ? `<span class="tb-month-count">${count} boxed</span>` : ""}
+              <div class="tb-month-events">${events || `<span class="tb-month-empty muted2">—</span>`}${more}</div>
             </button>`;
           }).join("")}
         </div>
@@ -1015,6 +1063,7 @@ const Tasks = (() => {
   function copyScheduleBetween(fromDate, toDate, forward) {
     const src = tbBlocksFor(fromDate);
     if (!src.length) { UI.toast(`No schedule found for ${forward ? "today" : "yesterday"} to copy`, "bad"); return; }
+    if (typeof Undo !== "undefined") Undo.record();
     const dest = tbBlocksFor(toDate);
     let placed = 0;
     src.forEach((b, i) => {
@@ -1035,6 +1084,7 @@ const Tasks = (() => {
   function saveRoutine() {
     const blocks = tbBlocksFor(Store.todayStr());
     if (!blocks.length) { UI.toast("Draw some blocks onto today's calendar first, then save the layout as your routine", "bad"); return; }
+    if (typeof Undo !== "undefined") Undo.record();
     Store.s.routine = blocks.map(b => {
       const t = b.taskId ? byId(b.taskId) : null;
       return { title: b.title, start: b.start, dur: b.dur, color: b.color, priority: t?.priority, tags: (t?.tags || []).slice(), skill: t?.skill, estimate: t?.estimate };
@@ -1046,6 +1096,7 @@ const Tasks = (() => {
   function applyRoutine() {
     const r = Store.s.routine;
     if (!r || !r.length) { UI.toast("No routine saved yet — build today's plan, then ⭐ Save as routine", "bad"); return; }
+    if (typeof Undo !== "undefined") Undo.record();
     const today = Store.todayStr();
     let placed = 0;
     r.forEach(spec => {
@@ -1061,6 +1112,7 @@ const Tasks = (() => {
   }
 
   function deleteRoutine() {
+    if (typeof Undo !== "undefined") Undo.record();
     Store.s.routine = null;
     Store.save(); renderTimeboxView();
     UI.toast("Routine deleted — save a new one anytime");

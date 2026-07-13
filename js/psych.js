@@ -208,7 +208,11 @@ const Psych = (() => {
         </div>
       </div>`;
     const ta = $("#bd-text");
-    ta.oninput = () => { Store.s.braindump = ta.value; Store.save(); };
+    ta.oninput = () => {
+      Store.s.braindump = ta.value;
+      Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("braindump");
+    };
     const convert = () => {
       const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
       if (!lines.length) { toast("Nothing to convert yet"); return 0; }
@@ -230,6 +234,7 @@ const Psych = (() => {
       if (n) { toast(`✅ ${n} task(s) created — drag them into hour blocks`); UI.showView("timebox"); }
     };
     $("#bd-clear").onclick = () => {
+      if (typeof Undo !== "undefined") Undo.record();
       Store.s.braindump = ""; ta.value = ""; Store.save();
       toast("🔥 Burned. Lighter already, right?");
     };

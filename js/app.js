@@ -1066,6 +1066,7 @@ const App = (() => {
     };
     document.getElementById("identity-banner").onclick = Psych.editIdentity;
 
+    if (typeof Undo !== "undefined") Undo.init();
     UI.initScratchpad();
     UI.initShortcuts();
     UI.initQuickBar();

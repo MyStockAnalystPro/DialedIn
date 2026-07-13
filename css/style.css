@@ -805,18 +805,32 @@ body[data-theme="night"] #view-notes {
 .tb-fade-in { animation: tbFadeIn .2s var(--ease); }
 @keyframes tbFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
-/* Timebox — month zoom-out view */
-.tb-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+/* Timebox — month zoom-out view (Linear-style calendar with task chips) */
+.tb-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .tb-month-dow { font-size: .66rem; color: var(--text-tertiary); text-align: center; padding: 4px 0 8px; letter-spacing: .04em; text-transform: uppercase; }
 .tb-month-cell {
-  aspect-ratio: 1 / 0.8; background: none; border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; cursor: pointer;
+  min-height: 112px; background: none; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 6px 6px 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; cursor: pointer;
   transition: border-color var(--speed) var(--ease), background var(--speed) var(--ease);
+  text-align: left; font: inherit; color: inherit;
 }
-.tb-month-cell:hover, .tb-month-cell:focus-visible { border-color: var(--line-strong); background: var(--card2); }
-.tb-month-cell.empty { border: none; cursor: default; pointer-events: none; }
-.tb-month-cell.today { border-color: var(--accent); }
-.tb-month-daynum { font-size: .76rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tb-month-cell:hover, .tb-month-cell:focus-visible { border-color: var(--line-strong); background: var(--card2); outline: none; }
+.tb-month-cell.empty { border: none; cursor: default; pointer-events: none; min-height: 0; }
+.tb-month-cell.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.tb-month-daynum { font-size: .76rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.tb-month-events { width: 100%; display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow: hidden; }
+.tb-month-event {
+  display: grid; grid-template-columns: 3px 8px 1fr auto; gap: 4px; align-items: center;
+  font-size: .62rem; line-height: 1.25; min-width: 0; padding: 1px 0;
+}
+.tb-month-event-bar { width: 3px; height: 13px; border-radius: 1px; flex-shrink: 0; }
+.tb-month-event-dot {
+  width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--line-strong); flex-shrink: 0;
+}
+.tb-month-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text); }
+.tb-month-event-time { color: var(--muted2); font-variant-numeric: tabular-nums; font-size: .58rem; flex-shrink: 0; }
+.tb-month-more { font-size: .58rem; color: var(--muted2); padding-top: 2px; font-variant-numeric: tabular-nums; }
+.tb-month-empty { font-size: .58rem; opacity: .45; }
 .tb-month-count { font-size: .62rem; color: var(--accent); font-variant-numeric: tabular-nums; }
 
 /* ---------- Quests / badges ---------- */

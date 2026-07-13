@@ -210,6 +210,7 @@ const Notes = (() => {
       if (isCanvasMirror) { toast("This note mirrors a canvas — delete the canvas from the Canvas tab instead.", "bad"); return; }
       Store.s.notes = Store.s.notes.filter(x => x.id !== n.id);
       if (activeNoteId === n.id) activeNoteId = null;
+      if (typeof Undo !== "undefined") Undo.record();
       Store.save(); render();
     };
     tile.onclick = () => openNoteModal(n.id);
@@ -290,6 +291,7 @@ const Notes = (() => {
       const cv = Store.s.canvases.find(c => c.noteId === n.id);
       if (cv) cv.name = titleInput.value;
       Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("note-title-" + n.id);
     };
 
     const colorBtn = wrap.querySelector("#note-color-btn");
@@ -314,6 +316,7 @@ const Notes = (() => {
     ed.oninput = () => {
       n.body = serializeEditor(ed);
       Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("note-body-" + n.id);
       syncWikiLinks(n); // pure data sync (no DOM writes) — safe every keystroke
       applyNoteBodyToCanvas(n); // if this note mirrors a canvas, reshape its cards live
       autoGrow();
@@ -1163,7 +1166,9 @@ const Notes = (() => {
     const n = Object.assign({ id: "n" + (Store.s.noteSeq++), title, body, color: null, links: [], history: [], createdAt: Date.now() }, extra || {});
     Store.s.notes.unshift(n);
     activeNoteId = n.id;
-    Store.save(); render();
+    Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
+    render();
     return n;
   }
 
@@ -1175,6 +1180,7 @@ const Notes = (() => {
     const n = Object.assign({ id: "n" + (Store.s.noteSeq++), title, body, color: null, links: [], history: [], createdAt: Date.now() }, extra || {});
     Store.s.notes.unshift(n);
     Store.save();
+    if (typeof Undo !== "undefined") Undo.record();
     return n;
   }
 
@@ -1279,15 +1285,31 @@ const Notes = (() => {
     let journalCredited = !!j.entry;
     $("#j-entry").oninput = e => {
       j.entry = e.target.value; Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("journal-entry");
       if (!journalCredited && j.entry.length > 30) { journalCredited = true; Game.questProgress("journal", 1); Game.addXP(20, null, { silent: true }); }
     };
     let gratCredited = !!j.gratitude;
     $("#j-grat").onchange = e => {
       j.gratitude = e.target.value; Store.save();
+      if (typeof Undo !== "undefined") Undo.recordDebounced("journal-grat");
       if (!gratCredited && j.gratitude.length > 3) { gratCredited = true; Game.questProgress("gratitude", 1); toast("🌼 Gratitude logged. +15 XP", "xp"); Game.addXP(15, null, { silent: true }); }
       Game.checkBadges();
     };
   }
 
-  return { render, renderJournal, renderMarkdown, dailyPrompt, dictate, downloadText, openNoteModal };
+  function syncOpenNote(fromEl) {
+    if (!noteModalBack || !activeNoteId) return;
+    const n = Store.s.notes.find(x => x.id === activeNoteId);
+    if (!n) return;
+    const root = noteModalBack;
+    const title = root.querySelector("#note-title");
+    const ed = root.querySelector("#note-editor");
+    if (title && (!fromEl || fromEl === title)) n.title = title.value;
+    if (ed && (!fromEl || fromEl === ed || ed.contains(fromEl))) n.body = serializeEditor(ed);
+    Store.save();
+  }
+
+  function getOpenNoteId() { return activeNoteId; }
+
+  return { render, renderJournal, renderMarkdown, dailyPrompt, dictate, downloadText, openNoteModal, closeNoteModal, syncOpenNote, getOpenNoteId };
 })();
