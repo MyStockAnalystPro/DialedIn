@@ -960,6 +960,12 @@ const Notes = (() => {
     if (!Store.s.canvases.length) {
       Store.s.canvases.push({ id: "cv" + (Store.s.canvasSeq++), name: "Empty canvas", cards: [], connections: [] });
     }
+    Store.s.notes.forEach(n => {
+      if (n.body && n.body.includes(":")) {
+        const norm = normalizeMarkupSource(n.body);
+        if (norm !== n.body) n.body = norm;
+      }
+    });
     Store.s.canvases.forEach(cv => migrateCanvasToSharedNotes(cv));
     if (!activeCanvasId || !Store.s.canvases.find(c => c.id === activeCanvasId)) activeCanvasId = Store.s.canvases[0].id;
   }
@@ -1146,14 +1152,17 @@ const Notes = (() => {
         e.stopPropagation();
         fontPop.classList.add("hidden");
         const font = sw.dataset.font;
-        if (font) applyCanvasCmd(bodyEd, "fontName", font);
-        commitCanvasBody(bodyEd, n);
+        if (font) {
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
+          applyCanvasCmd(bodyEd, "fontName", font);
+          commitCanvasBody(bodyEd, n);
+        }
       });
 
       const titleInput = d.querySelector(".canvas-card-title");
       titleInput.oninput = () => { if (n) { n.title = titleInput.value; onNoteDataChange(n); } };
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
-      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
+      titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); enterCardEdit(); } });
 
       if (n) { /* preview already set */ }
       d.querySelectorAll(".canvas-fmt-btn").forEach(b => {
