@@ -86,10 +86,10 @@ const Notes = (() => {
     if (!src) return "";
     let s = src;
     NOTE_COLORS.forEach(c => {
-      const re = new RegExp(`(^|[\\s|(])(${c.id}):([^\\s\\{\\}\\n|][^\\n\\{\\}|]*)`, "gi");
+      const re = new RegExp(`(^|[\\s(])(${c.id}):([^\\s\\{\\}\\n|]+)`, "gi");
       s = s.replace(re, (m, pre, id, text) => `${pre}{{${c.id}:${text.trim()}}}`);
     });
-    s = s.replace(/(?:^|\s|\|)font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
+    s = s.replace(/(?:^|\s)font:([^|\n]+)\|([^\n]+)/gi, (m, font, text) => {
       const trimmed = text.trim();
       if (trimmed.startsWith("{{")) return m;
       return ` {{font:${font.trim()}|${trimmed}}}`;
@@ -158,6 +158,11 @@ const Notes = (() => {
     out = out.replace(/^(\s*)- (.*)$/gm, "$1<li>$2</li>");
     out = out.replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g, "<ul>$1</ul>");
     out = renderStyledTokens(out);
+    // Catch any bare color:word still visible (e.g. mid-typing before normalize saved)
+    NOTE_COLORS.forEach(c => {
+      const re = new RegExp(`(^|[^\\w>])(?:&amp;)?(${c.id}):([^\\s<&]+)`, "gi");
+      out = out.replace(re, (m, pre, id, text) => `${pre}<span style="color:${c.hex}">${text}</span>`);
+    });
     // bold / italic / underline / inline code
     out = out.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     out = out.replace(/__([^_]+)__/g, "<u>$1</u>");
@@ -275,9 +280,42 @@ const Notes = (() => {
     });
   }
 
-  function notePreviewHtml(body) {
-    if (!body || !body.trim()) return "";
-    return renderMarkdown(body);
+  function renderNoteBodyHtml(n) {
+    return renderMarkdown(bodyForRender(n));
+  }
+
+  function notePreviewHtml(n) {
+    if (!n?.body?.trim() && !n?.font) return "";
+    return renderNoteBodyHtml(n);
+  }
+
+  function saveCaret(ed) {
+    const sel = window.getSelection();
+    if (!sel?.rangeCount || !ed.contains(sel.anchorNode)) return null;
+    return sel.getRangeAt(0).cloneRange();
+  }
+
+  function restoreCaret(ed, range) {
+    if (!range || !ed) return;
+    ed.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function prettyPrintEditor(ed, n) {
+    if (!ed || !n) return;
+    const caret = saveCaret(ed);
+    n.body = normalizeMarkupSource(serializeEditor(ed));
+    refreshEditorContent(ed, n);
+    restoreCaret(ed, caret);
+    Store.save();
+  }
+
+  let prettyPrintTimer = null;
+  function schedulePrettyPrint(ed, n) {
+    clearTimeout(prettyPrintTimer);
+    prettyPrintTimer = setTimeout(() => prettyPrintEditor(ed, n), 280);
   }
 
   function noteMatchesSearch(n, q) {
@@ -343,7 +381,7 @@ const Notes = (() => {
         <span class="note-tile-title">${esc(n.title || "Untitled")}</span>
         <button class="icon-btn note-tile-del" title="Delete"><i class="ico" data-ico="x"></i></button>
       </div>
-      <div class="note-tile-snip md-preview">${n.body?.trim() ? notePreviewHtml(n.body) : '<span class="muted2">Empty note</span>'}</div>`;
+      <div class="note-tile-snip md-preview">${(n.body?.trim() || n.font) ? notePreviewHtml(n) : '<span class="muted2">Empty note</span>'}</div>`;
     UI.mountIcons(tile);
     tile.querySelector(".note-tile-del").onclick = e => {
       e.stopPropagation();
@@ -459,6 +497,7 @@ const Notes = (() => {
       Store.save();
       if (typeof Undo !== "undefined") Undo.recordDebounced("note-body-" + n.id);
       syncWikiLinks(n);
+      schedulePrettyPrint(ed, n);
       onNoteDataChange(n);
       autoGrow();
     };
@@ -1047,7 +1086,10 @@ const Notes = (() => {
           <button type="button" class="canvas-fmt-btn" data-cmd="underline" title="Underline"><u>U</u></button>
           ${NOTE_COLORS.map(c => `<button type="button" class="canvas-fmt-color" data-color="${c.id}" style="background:${c.hex}" title="Text ${c.id}"></button>`).join("")}
         </div>
-        <div class="canvas-card-body" contenteditable="true"></div>
+        <div class="canvas-card-body-wrap">
+          <div class="canvas-card-preview"></div>
+          <div class="canvas-card-body hidden" contenteditable="true"></div>
+        </div>
         <div class="canvas-resize-handle"></div>`;
       UI.mountIcons(d);
 
@@ -1063,7 +1105,37 @@ const Notes = (() => {
 
       const colorPop = d.querySelector(".canvas-color-pop");
       const fontPop = d.querySelector(".canvas-font-pop");
+      const preview = d.querySelector(".canvas-card-preview");
       const bodyEd = d.querySelector(".canvas-card-body");
+
+      function updateCardPreview() {
+        preview.innerHTML = (n && (n.body?.trim() || n.font))
+          ? renderNoteBodyHtml(n)
+          : '<span class="muted2">Click to type…</span>';
+      }
+
+      function enterCardEdit() {
+        preview.classList.add("hidden");
+        bodyEd.classList.remove("hidden");
+        if (n) refreshEditorContent(bodyEd, n);
+        bodyEd.focus();
+      }
+
+      function exitCardEdit() {
+        if (!n) return;
+        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
+        syncWikiLinks(n);
+        Store.save();
+        bodyEd.classList.add("hidden");
+        preview.classList.remove("hidden");
+        updateCardPreview();
+        onNoteDataChange(n);
+      }
+
+      updateCardPreview();
+      preview.onclick = e => { e.stopPropagation(); enterCardEdit(); };
+      preview.addEventListener("mousedown", e => e.stopPropagation());
+
       d.querySelector(".card-color-dot").onclick = e => { e.stopPropagation(); fontPop.classList.add("hidden"); colorPop.classList.toggle("hidden"); };
       d.querySelectorAll(".canvas-color-swatch").forEach(sw => sw.onclick = e => {
         e.stopPropagation();
@@ -1083,22 +1155,26 @@ const Notes = (() => {
       titleInput.addEventListener("mousedown", e => e.stopPropagation());
       titleInput.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); bodyEd.focus(); } });
 
-      if (n) refreshEditorContent(bodyEd, n);
+      if (n) { /* preview already set */ }
       d.querySelectorAll(".canvas-fmt-btn").forEach(b => {
         b.addEventListener("mousedown", e => e.preventDefault());
         b.onclick = e => {
           e.stopPropagation();
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           applyCanvasCmd(bodyEd, b.dataset.cmd);
           commitCanvasBody(bodyEd, n);
+          updateCardPreview();
         };
       });
       d.querySelectorAll(".canvas-fmt-color").forEach(sw => {
         sw.addEventListener("mousedown", e => e.preventDefault());
         sw.onclick = e => {
           e.stopPropagation();
+          if (bodyEd.classList.contains("hidden")) enterCardEdit();
           const c = NOTE_COLORS.find(x => x.id === sw.dataset.color);
           if (c) applyCanvasCmd(bodyEd, "foreColor", c.hex);
           commitCanvasBody(bodyEd, n);
+          updateCardPreview();
         };
       });
       bodyEd.oninput = () => {
@@ -1106,15 +1182,10 @@ const Notes = (() => {
         n.body = serializeEditor(bodyEd);
         Store.save();
         if (typeof Undo !== "undefined") Undo.recordDebounced("canvas-card-" + n.id);
+        schedulePrettyPrint(bodyEd, n);
         onNoteDataChange(n);
       };
-      bodyEd.onblur = () => {
-        if (!n) return;
-        n.body = normalizeMarkupSource(serializeEditor(bodyEd));
-        syncWikiLinks(n);
-        refreshEditorContent(bodyEd, n);
-        onNoteDataChange(n);
-      };
+      bodyEd.onblur = () => exitCardEdit();
       bodyEd.addEventListener("mousedown", e => e.stopPropagation());
 
       const head = d.querySelector(".canvas-card-head");
@@ -1264,6 +1335,10 @@ const Notes = (() => {
     Store.save();
     refreshEditorContent(bodyEd, n);
     onNoteDataChange(n);
+    const preview = bodyEd.closest(".canvas-card")?.querySelector(".canvas-card-preview");
+    if (preview && bodyEd.classList.contains("hidden")) {
+      preview.innerHTML = renderNoteBodyHtml(n) || '<span class="muted2">Click to type…</span>';
+    }
   }
 
   // Serializes the rich-text (contenteditable) DOM of the note editor back into our plain-text

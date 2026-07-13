@@ -1102,6 +1102,15 @@ canvas.chart { width: 100%; }
   width: 10px; height: 10px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%;
   cursor: pointer; flex-shrink: 0;
 }
+.canvas-card-body-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.canvas-card-preview {
+  flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; font-size: .76rem; line-height: 1.45;
+  color: var(--text); cursor: text;
+}
+.canvas-card-preview .muted2 { color: var(--muted2); font-size: .72rem; }
+.canvas-card-preview b, .canvas-card-preview strong { font-weight: 600; }
+.canvas-card-body.hidden { display: none !important; }
+.canvas-card-preview.hidden { display: none !important; }
 .canvas-card-body {
   flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; font-size: .76rem; line-height: 1.45;
   outline: none; color: var(--text);
