@@ -1088,11 +1088,11 @@ canvas.chart { width: 100%; }
   font-size: .72rem; margin: 0; display: inline; font-weight: 600;
 }
 .note-tile-snip.md-preview b, .note-tile-snip.md-preview strong { font-weight: 600; color: var(--text); }
+.notecard-render-host .nc-color,
 .canvas-card-body .nc-color,
-.notecard-render-host .nc-color { font-weight: 500; }
+.note-tile-snip .nc-color { font-weight: 500; }
 .canvas-card-body .nc-font,
 .notecard-render-host .nc-font { font-weight: 400; }
-.note-tile-snip .nc-color { font-weight: 500; }
 .note-tile-snip.md-preview span[style*="color"]:not(.nc-color) { color: inherit; }
 .note-tile-snip.md-preview .nc-color { font-weight: 500; }
 .canvas-tab-label { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

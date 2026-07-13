@@ -1,12 +1,10 @@
 /* ==========================================================
-   notecard-renderer.js — parse formatting tokens into an AST
-   and render styled React components (never raw yellow: / bold:)
+   notecard-renderer.js — parse formatting tokens into styled DOM
+   (never show raw yellow: / bold: — render CSS styles instead)
    ========================================================== */
 "use strict";
 
 const NotecardRenderer = (() => {
-  const { createElement: h, Fragment } = React;
-
   const COLORS = {
     gray: "#8a8f98", red: "#e5484d", orange: "#f5a524", yellow: "#e8c547",
     green: "#46a758", blue: "#5e6ad2", purple: "#8e6ff0",
@@ -17,7 +15,7 @@ const NotecardRenderer = (() => {
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  /* ---------- Token normalization (storage / legacy shorthand → canonical {{…}}) ---------- */
+  /* ---------- Token normalization (yellow:word → {{yellow:word}}) ---------- */
   function normalizeSource(src) {
     if (!src) return "";
     let s = src;
@@ -33,7 +31,6 @@ const NotecardRenderer = (() => {
     return s.trim();
   }
 
-  /* ---------- Parser → AST (inline nodes only) ---------- */
   function mergeText(nodes) {
     const out = [];
     for (const n of nodes) {
@@ -147,53 +144,15 @@ const NotecardRenderer = (() => {
     return parseTokens(text);
   }
 
-  /* ---------- React styled components ---------- */
-  function renderChildren(children, keyPrefix = "") {
-    return (children || []).map((node, i) => renderNode(node, `${keyPrefix}${i}`));
-  }
-
-  function renderNode(node, key) {
-    if (!node) return null;
-    switch (node.type) {
-      case "text":
-        return h("span", { key, className: "nc-text" }, node.value);
-      case "color":
-        return h("span", {
-          key,
-          className: "nc-color",
-          style: { color: COLORS[node.color] || node.color },
-        }, ...renderChildren(node.children, `${key}-`));
-      case "font":
-        return h("span", {
-          key,
-          className: "nc-font",
-          style: { fontFamily: node.font },
-        }, ...renderChildren(node.children, `${key}-`));
-      case "bold":
-        return h("strong", { key, className: "nc-bold" }, ...renderChildren(node.children, `${key}-`));
-      case "italic":
-        return h("em", { key, className: "nc-italic" }, ...renderChildren(node.children, `${key}-`));
-      case "underline":
-        return h("u", { key, className: "nc-underline" }, ...renderChildren(node.children, `${key}-`));
-      default:
-        return h("span", { key }, node.value || "");
-    }
-  }
-
-  function NotecardContent({ nodes }) {
-    if (!nodes?.length) return null;
-    return h(Fragment, null, ...renderChildren(nodes));
-  }
-
-  /* ---------- DOM / HTML render (for contenteditable sync) ---------- */
+  /* ---------- Styled DOM components (vanilla — no React/CDN needed) ---------- */
   function astToHtml(nodes) {
     return (nodes || []).map(n => {
       switch (n.type) {
         case "text": return esc(n.value);
         case "color":
-          return `<span class="nc-color" style="color:${COLORS[n.color] || n.color}">${astToHtml(n.children)}</span>`;
+          return `<span class="nc-color" style="color:${COLORS[n.color] || n.color} !important">${astToHtml(n.children)}</span>`;
         case "font":
-          return `<span class="nc-font" style="font-family:${esc(n.font)}">${astToHtml(n.children)}</span>`;
+          return `<span class="nc-font" style="font-family:${esc(n.font)} !important">${astToHtml(n.children)}</span>`;
         case "bold":
           return `<strong class="nc-bold">${astToHtml(n.children)}</strong>`;
         case "italic":
@@ -209,38 +168,23 @@ const NotecardRenderer = (() => {
     return astToHtml(parse(src, opts));
   }
 
-  const roots = new WeakMap();
-
   function mount(el, src, opts = {}) {
     if (!el) return;
-    unmount(el);
-    const nodes = parse(src, opts);
-    const root = ReactDOM.createRoot(el);
-    roots.set(el, root);
-    root.render(h(NotecardContent, { nodes }));
+    const html = toHtml(src, opts);
+    el.innerHTML = html || "";
   }
 
   function unmount(el) {
-    const root = roots.get(el);
-    if (root) {
-      root.unmount();
-      roots.delete(el);
-    }
     if (el) el.innerHTML = "";
   }
 
   function update(el, src, opts = {}) {
-    if (!el) return;
-    const root = roots.get(el);
-    const nodes = parse(src, opts);
-    if (root) root.render(h(NotecardContent, { nodes }));
-    else mount(el, src, opts);
+    mount(el, src, opts);
   }
 
   return {
     COLORS, COLOR_IDS, STYLE_IDS,
     normalizeSource, parse, toHtml, astToHtml,
     mount, unmount, update,
-    NotecardContent, renderNode,
   };
 })();

@@ -303,8 +303,9 @@ const Notes = (() => {
   }
 
   function refreshCanvasEditorContent(ed, n) {
-    const { text, font } = bodyForRender(n);
-    ed.innerHTML = renderRichText(text, { font }) || "";
+    if (!n) return;
+    const raw = NotecardRenderer.normalizeSource(n.body || "");
+    ed.innerHTML = NotecardRenderer.toHtml(raw, { font: n.font }) || "";
   }
 
   function notePreviewHtml(n) {
@@ -1147,10 +1148,9 @@ const Notes = (() => {
       function syncCardDisplay() {
         if (!n) return;
         const text = cardBodyText(card, n);
-        if (text && text !== n.body) n.body = normalizeMarkupSource(text);
+        if (text) n.body = NotecardRenderer.normalizeSource(text);
         normalizeNoteBody(n);
         if (!n.body?.trim() && !n.font) {
-          NotecardRenderer.unmount(renderHost);
           renderHost.innerHTML = '<span class="muted2">Click to type…</span>';
         } else {
           NotecardRenderer.mount(renderHost, n.body, { font: n.font });
@@ -1162,8 +1162,7 @@ const Notes = (() => {
       function enterCardEdit() {
         if (!n) return;
         const text = cardBodyText(card, n);
-        if (text) n.body = normalizeMarkupSource(text);
-        NotecardRenderer.unmount(renderHost);
+        if (text) n.body = NotecardRenderer.normalizeSource(text);
         renderHost.classList.add("hidden");
         bodyEd.classList.remove("hidden");
         refreshCanvasEditorContent(bodyEd, n);
