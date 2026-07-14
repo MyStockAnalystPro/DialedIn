@@ -171,7 +171,7 @@ const Psych = (() => {
       const ta = $("#dg-reason");
       ta?.focus();
       if (ta) ta.oninput = () => {
-        const cat = window.Analytics ? Analytics.categorize(ta.value) : null;
+        const cat = Analytics.categorize(ta.value);
         $("#dg-cat").textContent = ta.value.trim() && cat ? `Auto-categorized as: ${cat.emoji} ${cat.label}` : "";
       };
     }, 60);

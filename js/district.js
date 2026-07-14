@@ -45,7 +45,10 @@ const District = (() => {
     let remaining = total;
     for (let i = 0; i < count; i++) { const m = Math.max(0, Math.min(SECTOR_CAP, remaining)); remaining -= m; sectors.push(m); }
     const developed = sectors.map((m, i) => ({ m, i })).filter(x => x.m > 0);
-    const rusted = new Set(developed.slice(-Math.min(broken, developed.length)).map(x => x.i));
+    // Rust the oldest sectors, but cap it so a stretch of broken sessions never wipes the whole
+    // city — the growth you earned always stays visible alongside the offline (rusted) blocks.
+    const rustCount = Math.min(broken, Math.max(0, Math.floor(developed.length * 0.4)));
+    const rusted = new Set(rustCount > 0 ? developed.slice(0, rustCount).map(x => x.i) : []);
     const hubs = sectors.filter((m, i) => m >= 25 && m < SECTOR_CAP && !rusted.has(i)).length;
     const skyscrapers = sectors.filter((m, i) => m >= SECTOR_CAP && !rusted.has(i)).length;
     return { total, broken, sectors, rusted, hubs, skyscrapers };
@@ -115,7 +118,7 @@ const District = (() => {
       const neon = NEON[(row * 3 + col) % NEON.length];
 
       if (stage === "plot") {
-        const m = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: isRusted ? "#3a2b22" : "#1b1b30", emissive: isRusted ? "#000000" : neon, emissiveIntensity: isRusted ? 0 : 0.12, metalness: 0.5, roughness: 0.6 }));
+        const m = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: isRusted ? "#3d2a17" : "#1b1b30", emissive: isRusted ? "#b45309" : neon, emissiveIntensity: isRusted ? 0.18 : 0.12, metalness: 0.5, roughness: 0.6 }));
         m.scale.set(1.9, 0.35, 1.9); m.position.set(x, 0.17, z);
         scene.add(m);
         return;
@@ -124,10 +127,10 @@ const District = (() => {
       const t = Math.min(1, (mins - 25) / (SECTOR_CAP - 25));
       const height = stage === "sky" ? 6.5 + t * 3 : 1.2 + t * 2.2;
       const tower = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({
-        color: isRusted ? "#2a2018" : "#12122a",
-        emissive: isRusted ? "#150a04" : neon,
-        emissiveIntensity: isRusted ? 0.05 : (stage === "sky" ? 0.9 : 0.55),
-        metalness: isRusted ? 0.2 : 0.75, roughness: isRusted ? 0.95 : 0.25,
+        color: isRusted ? "#3d2a17" : "#12122a",
+        emissive: isRusted ? "#b45309" : neon,
+        emissiveIntensity: isRusted ? 0.3 : (stage === "sky" ? 0.9 : 0.55),
+        metalness: isRusted ? 0.35 : 0.75, roughness: isRusted ? 0.85 : 0.25,
       }));
       tower.scale.set(1.5, height, 1.5);
       tower.position.set(x, height / 2, z);
@@ -142,9 +145,9 @@ const District = (() => {
         beacon.position.set(x, height + 0.4, z);
         scene.add(beacon);
       } else {
-        // rusted = offline: a dim, cracked-looking cap, no glow
-        const cap = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: "#1a120b", emissive: "#000", metalness: 0.1, roughness: 1 }));
-        cap.scale.set(1.7, 0.15, 1.7); cap.position.set(x, height + 0.1, z);
+        // rusted = offline: a dim amber cap, clearly "powered down" but still visible
+        const cap = new THREE.Mesh(boxGeo, new THREE.MeshStandardMaterial({ color: "#5a3a1a", emissive: "#7c3a09", emissiveIntensity: 0.35, metalness: 0.2, roughness: 0.9 }));
+        cap.scale.set(1.7, 0.2, 1.7); cap.position.set(x, height + 0.12, z);
         scene.add(cap);
       }
     });
