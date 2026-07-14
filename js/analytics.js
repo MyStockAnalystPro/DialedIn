@@ -394,5 +394,5 @@ const Analytics = (() => {
     toast("📋 Report downloaded");
   }
 
-  return { render };
+  return { render, categorize: categorizeAvoidance };
 })();

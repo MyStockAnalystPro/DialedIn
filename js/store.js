@@ -61,6 +61,17 @@ const Store = (() => {
     pomo: { work: 25, brk: 5, autoAdjust: true, strict: false },
     sessionsCompleted: 0,
     totalFocusMin: 0,
+    sessionLog: [],           // {id, title, start, end, focusMin, pauseMs, mode, phase, completed, missed}
+    sessionSeq: 1,            // for default "Untitled #" titles
+    distractionLog: [],       // {ts, reason, category, taskTitle} — long-term, auto-categorized
+
+    // focus tools
+    stickies: [],             // floating sticky notes: {id, text, x, y, color, min}
+    sheets: [],               // excel-style grids: {id, name, cols, rows, data:{"r,c":val}}
+    sheetSeq: 1,
+    flashDecks: [],           // SM-2 decks: {id, name, cards:[{id, front, back, ef, reps, interval, due, lapses}]}
+    flashSeq: 1,
+    integrations: { spotifyUrl: "", provider: "gmail", googleClientId: "", msClientId: "" },
 
     // day tracking
     dayStats: {},             // date -> {focusMin, tasksDone, xp, water, mood:[], distracted, sessions}

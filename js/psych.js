@@ -150,20 +150,16 @@ const Psych = (() => {
      Self-report → own it in writing → drop straight into a fullscreen,
      auto-started Focus Session (same screen as clicking the timer ring). */
   function distractionGate() {
+    const t = Tasks.nowTask();
     modal("🫠 Got distracted?", `
-      <div class="wall-note">🧱 <b>Stare at a blank wall for 10 seconds.</b> No phone, no tabs — just be bored for a moment. Then come back and type the sentence below <b>exactly</b>.</div>
-      <p class="gate-phrase">"${esc(MEDIA_PHRASE)}"</p>
-      <input type="text" id="dg-input" placeholder="Type it exactly…" autocomplete="off">
-      <p class="muted" id="dg-err" style="font-size:.72rem;margin-top:8px;color:var(--bad);display:none">Doesn't match yet — try again, word for word.</p>`,
+      <p class="muted" style="font-size:.82rem;margin-bottom:10px">Name what pulled you away — one line is enough. It's auto-sorted into a theme and saved to your long-term distraction log so patterns surface in Analytics.</p>
+      <label class="field"><span>What distracted you?</span>
+        <textarea id="dg-reason" class="pl-reason-box" placeholder="e.g. opened youtube, phone buzzed, got a text, started daydreaming…"></textarea></label>
+      <div id="dg-cat" class="dg-cat-hint muted2"></div>`,
       [
-        { label: "Cancel" },
-        { label: "🎯 I said it. Refocus me.", cls: "primary", onClick: m => {
-          const val = m.querySelector("#dg-input").value.trim().toLowerCase();
-          if (val !== MEDIA_PHRASE.toLowerCase()) {
-            m.querySelector("#dg-err").style.display = "block";
-            AudioFX.play("fail");
-            return false;
-          }
+        { label: "Just log it", onClick: m => logDistraction(m) === false ? false : undefined },
+        { label: "🎯 Log & refocus me", cls: "primary", onClick: m => {
+          if (logDistraction(m) === false) return false;
           setTimeout(() => {
             UI.enterZen();
             if (!Timer.isRunning()) Timer.start("pomodoro");
@@ -171,7 +167,24 @@ const Psych = (() => {
           }, 30);
         }},
       ], { sticky: true });
-    setTimeout(() => $("#dg-input")?.focus(), 60);
+    setTimeout(() => {
+      const ta = $("#dg-reason");
+      ta?.focus();
+      if (ta) ta.oninput = () => {
+        const cat = window.Analytics ? Analytics.categorize(ta.value) : null;
+        $("#dg-cat").textContent = ta.value.trim() && cat ? `Auto-categorized as: ${cat.emoji} ${cat.label}` : "";
+      };
+    }, 60);
+    function logDistraction(m) {
+      const reason = m.querySelector("#dg-reason").value.trim();
+      if (reason.length < 2) { toast("Write a few words about what distracted you.", "bad"); return false; }
+      const cat = Analytics.categorize(reason);
+      (Store.s.distractionLog = Store.s.distractionLog || []).push({
+        ts: Date.now(), reason, category: cat.id, categoryLabel: cat.label, taskTitle: t ? t.title : null,
+      });
+      Store.save();
+      toast(`Logged (${cat.emoji} ${cat.label}). Patterns show up in Analytics & Sessions. 🔍`);
+    }
   }
 
   /* ---------- Identity anchor ---------- */

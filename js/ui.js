@@ -51,6 +51,8 @@ const UI = (() => {
     bell: `<path d="M8 2.6c-2 0-3.4 1.6-3.4 3.8v2c0 .8-.3 1.5-.9 2.2l-.5.6h9.6l-.5-.6c-.6-.7-.9-1.4-.9-2.2v-2c0-2.2-1.4-3.8-3.4-3.8z"/><path d="M6.5 12.4a1.6 1.6 0 0 0 3 0"/>`,
     search: `<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2l3.3 3.3"/>`,
     cube: `<path d="M8 2.4 13.4 5.4v5.2L8 13.6 2.6 10.6V5.4z"/><path d="M2.6 5.4 8 8.4l5.4-3M8 8.4v5.2"/>`,
+    dog: `<path d="M4.4 4 3.2 2.6 3 5.1M11.6 4l1.2-1.4.2 2.5"/><path d="M4 6.2C4 4.3 5.7 3.4 8 3.4s4 .9 4 2.8v3c0 2.2-1.8 3.6-4 3.6s-4-1.4-4-3.6z"/><circle cx="6.4" cy="7.2" r=".55" fill="currentColor" stroke="none"/><circle cx="9.6" cy="7.2" r=".55" fill="currentColor" stroke="none"/><path d="M8 8.8v1.1M6.7 10.4h2.6"/>`,
+    building: `<path d="M3.5 13.5V4.2L8 2.5v11M8 6.2l4.5 1.4v5.9"/><path d="M5.2 6.2h1.2M5.2 8.4h1.2M5.2 10.6h1.2M9.7 9h1.1M9.7 11h1.1"/>`,
   };
   function iconSVG(name) { return ICONS[name] ? `<svg ${SVG_OPEN}>${ICONS[name]}</svg>` : ""; }
   function mountIcons(root) {

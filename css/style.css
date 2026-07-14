@@ -1423,3 +1423,104 @@ body.minimal-zen #identity-banner { opacity: .55; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-track { background: transparent; }
 ::selection { background: var(--glow); }
+
+/* ==========================================================
+   Feature expansion: District 3D, Sessions, Sheets, Flashcards,
+   Sticky notes, Integrations, distraction categorizer hint
+   ========================================================== */
+
+/* Session title input in the Pulse options row */
+.session-title-label input { width: 140px; }
+.dg-cat-hint { font-size: .74rem; margin-top: 8px; min-height: 1em; }
+
+/* ---------- 3D District ---------- */
+.district-wrap { position: relative; height: calc(100vh - 150px); min-height: 460px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #08080d; }
+.district-canvas-host { position: absolute; inset: 0; }
+.district-canvas-host canvas { display: block; }
+.district-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 30px; color: var(--muted); font-size: .84rem; }
+.district-hud {
+  position: absolute; top: 14px; left: 14px; z-index: 3; width: 232px;
+  background: rgba(10, 10, 20, .66); border: 1px solid rgba(120,130,255,.25); border-radius: var(--radius);
+  padding: 14px 16px; backdrop-filter: blur(8px); color: #e7e9ff;
+}
+.district-hud-title { font-weight: 700; letter-spacing: .02em; margin-bottom: 10px; color: #a9b4ff; }
+.district-hud-stat { display: flex; justify-content: space-between; font-size: .78rem; padding: 3px 0; color: #c9cdf0; }
+.district-hud-stat b { color: #fff; }
+.district-rust { color: #f5a524 !important; }
+.district-hud-legend { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; font-size: .68rem; color: #9a9fce; }
+.district-hud-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; vertical-align: middle; }
+.district-hud-hint { font-size: .66rem; color: #7d82b0; margin-top: 8px; }
+.district-hud .btn.sm { margin-top: 2px; }
+
+/* ---------- Sessions / distraction history ---------- */
+.ss-list { margin-top: 6px; }
+.ss-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title tags" "meta meta"; gap: 2px 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.ss-row:last-child { border-bottom: none; }
+.ss-title { grid-area: title; font-weight: 600; font-size: .82rem; }
+.ss-tags { grid-area: tags; display: flex; gap: 5px; }
+.ss-meta { grid-area: meta; font-size: .72rem; color: var(--muted2); }
+.tag.ss-ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.tag.ss-miss { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, var(--line)); }
+
+/* ---------- Excel-style Sheets ---------- */
+.sheet-scroll { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); max-height: calc(100vh - 260px); }
+.sheet-table { border-collapse: collapse; font-size: .78rem; }
+.sheet-table th { background: var(--card2); color: var(--muted2); font-weight: 600; font-size: .7rem; text-align: center; padding: 5px 8px; position: sticky; top: 0; z-index: 2; border: 1px solid var(--line); }
+.sheet-table .sheet-rownum { position: sticky; left: 0; z-index: 1; min-width: 34px; }
+.sheet-table .sheet-corner { position: sticky; left: 0; top: 0; z-index: 3; }
+.sheet-cell { border: 1px solid var(--line); min-width: 96px; height: 30px; padding: 0; cursor: cell; vertical-align: middle; }
+.sheet-cell:hover { background: var(--card2); }
+.sheet-cell-view { padding: 5px 8px; min-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.sheet-input { width: 100%; height: 30px; border: 2px solid var(--accent); background: var(--bg); padding: 0 6px; font-size: .78rem; border-radius: 0; box-shadow: none; }
+
+/* ---------- Flashcards ---------- */
+.fc-deck-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-top: 10px; }
+.fc-deck { text-align: left; background: var(--card2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 16px; cursor: pointer; transition: border-color var(--speed) var(--ease), transform var(--speed) var(--ease); }
+.fc-deck:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.fc-deck-name { font-weight: 600; font-size: .9rem; margin-bottom: 6px; }
+.fc-deck-meta { font-size: .74rem; color: var(--muted2); }
+.fc-due { color: var(--accent); }
+.fc-add-row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.fc-add-row input { flex: 1; min-width: 140px; }
+.fc-card-row { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: .8rem; }
+.fc-card-row:last-child { border-bottom: none; }
+.fc-card-sched { font-size: .68rem; color: var(--text-tertiary); white-space: nowrap; }
+.fc-study { text-align: center; }
+.fc-study-progress { font-size: .74rem; color: var(--muted2); margin-bottom: 14px; }
+.fc-flash { min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px; background: var(--card2); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 16px; }
+.fc-flash-front { font-size: 1.3rem; font-weight: 600; }
+.fc-flash-div { width: 60%; height: 1px; background: var(--line-strong); }
+.fc-flash-back { font-size: 1.1rem; color: var(--muted2); }
+.fc-study-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.fc-quit { margin-top: 14px; }
+.fc-study-done { text-align: center; padding: 40px; }
+
+/* ---------- Sticky notes ---------- */
+#sticky-layer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.sticky-note {
+  --sk: #f5d90a; position: absolute; width: 210px; pointer-events: auto;
+  background: color-mix(in srgb, var(--sk) 22%, #16161c); border: 1px solid var(--sk);
+  border-radius: 8px; box-shadow: 0 8px 26px rgba(0,0,0,.4); display: flex; flex-direction: column; overflow: hidden;
+}
+.sticky-note.min textarea, .sticky-note.min .sticky-swatches { display: none; }
+.sticky-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px; cursor: grab; background: color-mix(in srgb, var(--sk) 40%, transparent); }
+.sticky-head:active { cursor: grabbing; }
+.sticky-head button { background: none; border: none; color: var(--text); cursor: pointer; font-size: .72rem; width: 20px; height: 20px; border-radius: 4px; }
+.sticky-head button:hover { background: rgba(255,255,255,.12); }
+.sticky-color { background: var(--sk) !important; border-radius: 50% !important; width: 13px !important; height: 13px !important; }
+.sticky-note textarea { border: none; background: none; resize: vertical; min-height: 104px; padding: 8px 10px; font-size: .82rem; color: var(--text); box-shadow: none; }
+.sticky-note textarea:focus { box-shadow: none; }
+.sticky-swatches { display: flex; gap: 5px; padding: 6px 8px; flex-wrap: wrap; }
+.sticky-swatches.hidden { display: none; }
+.sticky-swatches button { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); cursor: pointer; }
+
+/* ---------- Integrations ---------- */
+.sp-frame { margin-top: 12px; }
+.mail-status { font-size: .78rem; color: var(--muted2); margin: 10px 0; }
+.mail-hint { font-size: .74rem; margin-top: 8px; line-height: 1.5; }
+.mail-list { margin-top: 8px; }
+.mail-row { display: grid; grid-template-columns: 1fr; gap: 2px; padding: 10px 2px; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--text); }
+.mail-row:hover { background: var(--card2); }
+.mail-subject { font-weight: 600; font-size: .82rem; }
+.mail-from { font-size: .72rem; }
+.mail-snippet { font-size: .72rem; }

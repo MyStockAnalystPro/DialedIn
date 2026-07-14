@@ -16,7 +16,32 @@ const Timer = (() => {
     minutesCredited: 0,
     overtimeStart: 0,
     tick: null,
+    session: null,          // current session record being tracked
+    pendingTitle: "",       // title typed before a session starts
   };
+
+  /* ---------- Session records (titles, pause_duration, long-term log) ---------- */
+  function beginSessionRecord(mode) {
+    endSession(false); // finalize any lingering record first
+    let title = (state.pendingTitle || "").trim();
+    if (!title) { title = "Untitled #" + (Store.s.sessionSeq || 1); Store.s.sessionSeq = (Store.s.sessionSeq || 1) + 1; }
+    state.session = { id: "se" + Date.now() + Math.floor(Math.random() * 1000), title, mode, start: Date.now(), focusMin: 0, pauseMs: 0, completed: false, missed: false };
+    Store.save();
+  }
+  function endSession(completed) {
+    if (!state.session) return;
+    const s = state.session;
+    s.end = Date.now();
+    s.focusMin = (state.minutesCredited || 0) + (state.otCredited || 0);
+    let pause = state.pausedTotal || 0;
+    if (state.paused && state.pausedAt) pause += Date.now() - state.pausedAt;
+    s.pauseMs = pause;
+    s.completed = !!completed;
+    (Store.s.sessionLog = Store.s.sessionLog || []).push(s);
+    if (Store.s.sessionLog.length > 2000) Store.s.sessionLog = Store.s.sessionLog.slice(-1500);
+    state.session = null;
+    Store.save();
+  }
 
   const BREAK_IDEAS = [
     "🚰 Get a glass of water and drink all of it",
@@ -82,6 +107,8 @@ const Timer = (() => {
     state.startTs = Date.now(); state.pausedTotal = 0;
     state.minutesCredited = 0;
     state.durationSec = mode === "five" ? 5 * 60 : mode === "stopwatch" ? 0 : Store.s.pomo.work * 60;
+    state.otCredited = 0;
+    beginSessionRecord(mode);
     AudioFX.play("start");
     Store.day().sessions++;
     if (mode === "five") toast("🚪 Just 5 minutes. That's the whole deal. Go.", "xp");
@@ -141,6 +168,7 @@ const Timer = (() => {
     if (state.mode === "five") {
       // The psychological trick: momentum is now on their side
       state.running = false; state.phase = "idle"; clearInterval(state.tick);
+      endSession(true);
       modal("🚪 5 minutes done — resistance broken!", `
         <p>Aarush, you did the hard part: <b>you started.</b></p>
         <p class="muted" style="margin-top:8px">Motivation follows action, not the other way around. Ride the momentum?</p>`,
@@ -161,6 +189,7 @@ const Timer = (() => {
   }
 
   function takeBreak() {
+    endSession(true); // the focus session is done; the break itself isn't logged as a session
     clearInterval(state.tick);
     state.phase = "break";
     state.running = true; state.paused = false;
@@ -201,6 +230,7 @@ const Timer = (() => {
     }
     state.running = false; state.phase = "idle"; state.paused = false;
     clearInterval(state.tick);
+    endSession(finished);
     document.querySelector(".zone-now")?.classList.remove("pulsing");
     renderPulse(); UI.updateZen();
   }
@@ -214,6 +244,7 @@ const Timer = (() => {
         { label: "💪 Keep going", cls: "primary" },
         { label: "Fail Session (15-min lockout)", cls: "danger", onClick: () => {
           state.running = false; state.phase = "idle"; clearInterval(state.tick);
+          endSession(false);
           AudioFX.play("fail");
           startLockout(15 * 60);
           renderPulse();
@@ -236,29 +267,6 @@ const Timer = (() => {
         if (opts.onDone) opts.onDone(); else toast("Lockout over. Fresh start. 💙", "xp");
       }
     }, 500);
-  }
-
-  /* ---------- Mandatory Rest Break (burnout guard) ----------
-     Gamifies recovery: completing the forced rest pays XP + coins. */
-  function mandatoryRest(focusedMins, distractionSpike) {
-    // pause whatever is running (bypasses strict mode — recovery outranks it)
-    state.running = false; state.phase = "idle"; state.paused = false;
-    clearInterval(state.tick);
-    renderPulse(); UI.updateZen(); UI.exitZen();
-    AudioFX.play("start");
-    const why = distractionSpike >= 5
-      ? `Your focus-to-distraction ratio is dropping fast (${distractionSpike} distractions this block). That's your brain waving a white flag.`
-      : `You've focused ${focusedMins} minutes straight. Elite — but recovery is part of the training, not a break from it.`;
-    startLockout(10 * 60, {
-      title: "🛌 Mandatory Rest Break",
-      msg: `${why} DialedIn is locked for 10 minutes.`,
-      hint: "Walk. Water. Look out a window. Finishing this rest pays +60 XP and +25 coins — recovery is part of the game.",
-      onDone: () => {
-        Game.addXP(60, null, { noMult: true, silent: true });
-        Game.addCoins(25, true);
-        toast("🛌 Recovery complete: +60 XP, +25 🪙. THIS is how you avoid the week-three burnout wall.", "gold", 6000);
-      },
-    });
   }
 
   /* ---------- Notifications ---------- */
@@ -291,6 +299,7 @@ const Timer = (() => {
         </div>
       </div>
       <div class="timer-opts">
+        <label title="Name this focus session (defaults to Untitled #)" class="session-title-label">session <input type="text" id="opt-session-title" placeholder="Untitled #${Store.s.sessionSeq || 1}" value="${esc(state.session ? state.session.title : (state.pendingTitle || ""))}"></label>
         <label title="Session length in minutes">work <input type="number" id="opt-work" min="5" max="180" value="${Store.s.pomo.work}">m</label>
         <label title="Break length in minutes">break <input type="number" id="opt-brk" min="1" max="60" value="${Store.s.pomo.brk}">m</label>
         <label title="No pausing once started"><input type="checkbox" id="opt-strict" ${Store.s.pomo.strict ? "checked" : ""}> Strict</label>
@@ -320,6 +329,12 @@ const Timer = (() => {
       container.querySelectorAll(".mode-btn").forEach(x => x.classList.toggle("active", x === b));
       renderPulse();
     });
+    const titleInp = container.querySelector("#opt-session-title");
+    if (titleInp) titleInp.oninput = e => {
+      const v = e.target.value;
+      if (state.session) { state.session.title = v || state.session.title; Store.save(); }
+      else state.pendingTitle = v;
+    };
     container.querySelector("#opt-strict").onchange = e => { Store.s.pomo.strict = e.target.checked; Store.save(); };
     container.querySelector("#opt-smart").onchange = e => { Store.s.pomo.autoAdjust = e.target.checked; Store.save(); };
     container.querySelector("#opt-work").onchange = e => {
@@ -406,10 +421,12 @@ const Timer = (() => {
   }
 
   return {
-    start, stop, togglePause, takeBreak, startLockout, mandatoryRest,
+    start, stop, togglePause, takeBreak, startLockout,
     pulseHTML, bindPulse, renderPulse, renderChrome, displayTime,
     isRunning: () => state.running,
     isPaused: () => state.paused,
     phase: () => state.phase,
+    setPendingTitle: t => { state.pendingTitle = t; },
+    currentSession: () => state.session,
   };
 })();

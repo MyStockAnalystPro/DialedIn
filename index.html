@@ -8,6 +8,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 </head>
 <body data-theme="night" data-font="default">
 
@@ -32,6 +40,7 @@
         <button class="nav-item active" data-view="dashboard"><i class="ico" data-ico="home"></i>Dashboard <kbd>1</kbd></button>
         <button class="nav-item" data-view="tasks"><i class="ico" data-ico="check"></i>Tasks <kbd>2</kbd></button>
         <button class="nav-item" data-view="timebox"><i class="ico" data-ico="calendar"></i>Timebox <kbd>3</kbd></button>
+        <button class="nav-item" data-view="district"><i class="ico" data-ico="building"></i>District</button>
       </div>
 
       <div class="nav-group" data-group="progression">
@@ -46,6 +55,7 @@
         <button class="nav-group-head"><i class="ico caret" data-ico="chevron"></i>Insights</button>
         <div class="nav-group-items">
           <button class="nav-item" data-view="analytics"><i class="ico" data-ico="bars"></i>Analytics <kbd>8</kbd></button>
+          <button class="nav-item" data-view="sessions"><i class="ico" data-ico="clock"></i>Sessions</button>
           <button class="nav-item" data-view="wellness"><i class="ico" data-ico="heart"></i>Wellness <kbd>9</kbd></button>
         </div>
       </div>
@@ -53,8 +63,11 @@
         <button class="nav-group-head collapsed"><i class="ico caret" data-ico="chevron"></i>Tools</button>
         <div class="nav-group-items collapsed">
           <button class="nav-item" data-view="notes"><i class="ico" data-ico="file"></i>Notes <kbd>7</kbd></button>
+          <button class="nav-item" data-view="flashcards"><i class="ico" data-ico="book"></i>Flashcards</button>
+          <button class="nav-item" data-view="sheets"><i class="ico" data-ico="bars"></i>Sheets</button>
           <button class="nav-item" data-view="journal"><i class="ico" data-ico="book"></i>Journal</button>
           <button class="nav-item" data-view="braindump"><i class="ico" data-ico="wind"></i>Brain Dump</button>
+          <button class="nav-item" data-view="integrations"><i class="ico" data-ico="link"></i>Integrations</button>
           <button class="nav-item" data-view="automation"><i class="ico" data-ico="zap"></i>Automation</button>
         </div>
       </div>
@@ -64,7 +77,7 @@
       <div id="side-timer" title="Click to open Focus Session">
         <span id="side-timer-dot"></span><span id="side-timer-time">--:--</span><span id="side-timer-label" class="muted">ready</span>
       </div>
-      <button class="nav-item" data-view="settings"><i class="ico" data-ico="settings"></i>Settings</button>
+      <button class="nav-item" data-view="settings"><i class="ico" data-ico="dog"></i>Settings</button>
       <button id="zen-btn" class="btn ghost" title="Minimal Mode (z) — hides everything but timer, tasks & analytics"><i class="ico" data-ico="moon"></i>Zen Mode</button>
       <button id="shortcut-btn" class="btn ghost" title="Keyboard shortcuts (?)"><i class="ico" data-ico="keyboard"></i>Shortcuts</button>
     </div>
@@ -86,6 +99,7 @@
       </div>
       <div class="top-actions">
         <button id="cmd-palette-btn" class="icon-btn" title="Search everything (Ctrl/Cmd+K)"><i class="ico" data-ico="search"></i></button>
+        <button id="sticky-add-btn" class="icon-btn" title="Add a floating sticky note"><i class="ico" data-ico="edit"></i></button>
         <button id="scratch-toggle" class="icon-btn" title="Scratchpad (s)"><i class="ico" data-ico="scratch"></i></button>
         <button id="tour-btn" class="icon-btn" title="Guided tour"><i class="ico" data-ico="compass"></i></button>
         <button id="media-guard-btn" class="icon-btn" title="About to watch/play something?"><i class="ico" data-ico="gamepad"></i></button>
@@ -98,6 +112,11 @@
       <section class="view active" id="view-dashboard"></section>
       <section class="view" id="view-tasks"></section>
       <section class="view" id="view-timebox"></section>
+      <section class="view" id="view-district"></section>
+      <section class="view" id="view-sessions"></section>
+      <section class="view" id="view-sheets"></section>
+      <section class="view" id="view-flashcards"></section>
+      <section class="view" id="view-integrations"></section>
       <section class="view" id="view-quests"></section>
       <section class="view" id="view-skills"></section>
       <section class="view" id="view-shop"></section>
@@ -169,6 +188,12 @@
 <script src="js/analytics.js"></script>
 <script src="js/notes.js"></script>
 <script src="js/wellness.js"></script>
+<script src="js/sessions.js"></script>
+<script src="js/district.js"></script>
+<script src="js/grid.js"></script>
+<script src="js/flashcards.js"></script>
+<script src="js/sticky.js"></script>
+<script src="js/integrations.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

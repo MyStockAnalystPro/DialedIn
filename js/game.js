@@ -451,13 +451,14 @@ const Game = (() => {
     addXP(Math.max(1, Math.round(mins * 2 * earnScale())), skillId, { silent: true }); // 2 XP/min, scaled after 3h/day
     notifyInflationOnce();
     questProgress("focusMin", mins);
-    // burnout guard: force a rest after 150 min since last rest, or sooner if distractions spike
+    // Gentle (optional) recovery nudge — rest breaks are no longer mandatory: we only suggest one,
+    // the app is never locked. Fires at most once per long stretch.
     const sinceRest = d.focusMin - (d.restAnchor || 0);
     const distractionsSinceRest = d.distracted - (d.distractAnchor || 0);
     if (sinceRest >= 150 || (sinceRest >= 60 && distractionsSinceRest >= 5)) {
       d.restAnchor = d.focusMin;
       d.distractAnchor = d.distracted;
-      Timer.mandatoryRest(sinceRest, distractionsSinceRest);
+      UI.toast("🫶 You've been at it a while — a short break is optional but recommended. Keep going if you're in flow.", "", 5200);
     }
     // 6 hours of focus in a single day — massive reward + a legend's words
     if (d.focusMin >= 360 && !d.sixHourDone) {

@@ -1019,6 +1019,11 @@ const App = (() => {
     UI.registerView("dashboard", renderDashboard);
     UI.registerView("tasks", () => Tasks.renderTasksView());
     UI.registerView("timebox", () => Tasks.renderTimeboxView());
+    UI.registerView("district", () => District.render());
+    UI.registerView("sessions", () => Sessions.render());
+    UI.registerView("sheets", () => Sheets.render());
+    UI.registerView("flashcards", () => Flashcards.render());
+    UI.registerView("integrations", () => Integrations.render());
     UI.registerView("quests", renderQuests);
     UI.registerView("skills", renderSkills);
     UI.registerView("shop", renderShop);
@@ -1064,6 +1069,8 @@ const App = (() => {
     UI.initScratchpad();
     UI.initShortcuts();
     UI.initQuickBar();
+    Sticky.init();
+    document.getElementById("sticky-add-btn").onclick = () => Sticky.add();
     UI.applyTheme();
     UI.refreshGreeting();
     UI.refreshIdentity();
